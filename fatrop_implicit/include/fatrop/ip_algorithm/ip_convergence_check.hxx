@@ -1,0 +1,74 @@
+//
+// Copyright (c) Lander Vanroye, KU Leuven.
+// This file is part of fatrop.
+//
+// This file contains work derived from Ipopt (https://github.com/coin-or/Ipopt),
+// Copyright (C) 2004, 2010 International Business Machines and others.
+// Ipopt is licensed under the Eclipse Public License 2.0 (EPL-2.0).
+//
+// This file is licensed under the Eclipse Public License 2.0.
+// See LICENSE-EPL-2.0.txt for the full license text.
+//
+
+#ifndef __fatrop_ip_algorithm_ip_convergence_check_hxx__
+#define __fatrop_ip_algorithm_ip_convergence_check_hxx__
+
+#include "fatrop/common/options.hpp"
+#include "fatrop/ip_algorithm/ip_convergence_check.hpp"
+#include "fatrop/ip_algorithm/ip_data.hpp"
+#include "fatrop/linear_algebra/vector.hpp"
+#include "fatrop/nlp/dims.hpp"
+#include "fatrop/ocp/nlp_ocp.hpp"
+
+namespace fatrop
+{
+    template <typename ProblemType>
+    IpConvergenceCheck<ProblemType>::IpConvergenceCheck(const IpDataSp &ipdata) : ipdata_(ipdata)
+    {
+    }
+
+    template <typename ProblemType> void IpConvergenceCheck<ProblemType>::reset()
+    {
+        acceptable_counter_ = 0;
+    }
+
+    template <typename ProblemType> bool IpConvergenceCheck<ProblemType>::check_acceptable() const
+    {
+        return (ipdata_->current_iterate().e_mu(0.) <= tol_acceptable_ &&
+                norm_inf(ipdata_->current_iterate().constr_viol()) <= constr_viol_tol_);
+    }
+
+    template <typename ProblemType>
+    IpConvergenceStatus IpConvergenceCheck<ProblemType>::check_converged()
+    {
+        Scalar tol = ipdata_->tolerance();
+
+        if (ipdata_->current_iterate().e_mu(0.) <= tol &&
+            norm_inf(ipdata_->current_iterate().constr_viol()) <= constr_viol_tol_)
+            return IpConvergenceStatus::Converged;
+        if (check_acceptable())
+        {
+            acceptable_counter_++;
+            if (acceptable_counter_ >= acceptable_iter_)
+                return IpConvergenceStatus::ConvergedToAcceptablePoint;
+        }
+        else
+        {
+            acceptable_counter_ = 0;
+        }
+        if (ipdata_->iteration_number() >= max_iter_)
+            return IpConvergenceStatus::MaxIterExceeded;
+        return IpConvergenceStatus::Continue;
+    }
+
+    template <typename ProblemType>
+    void IpConvergenceCheck<ProblemType>::register_options(OptionRegistry &registry)
+    {
+        registry.register_option("tol_acceptable", &IpConvergenceCheck::set_tol_acceptable, this);
+        registry.register_option("acceptable_iter", &IpConvergenceCheck::set_acceptable_iter, this);
+        registry.register_option("max_iter", &IpConvergenceCheck::set_max_iter, this);
+        registry.register_option("constr_viol_tol", &IpConvergenceCheck::set_constr_viol_tol, this);
+    }
+
+} // namespace fatrop
+#endif // __fatrop_ip_algorithm_ip_convergence_check_hxx__

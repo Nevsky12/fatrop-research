@@ -1,0 +1,48 @@
+# 3D Pendulum Configuration Parameters
+
+# Problem dimensions
+n: 8   # Number of pendulums
+m: 1   # Default mass
+L: 0.5   # Default length of pendulum segment
+g: 9.81  # Gravitational acceleration (m/s^2)
+
+# Length stabilization
+stabilizer:
+  use: true  # Whether to add a stabilizer to enforce length constraints
+  gamma_1: 2.0 #20.0        # Stabilizer gain for position error
+  gamma_2: 200.0 #2000.0      # Stabilizer gain for velocity error
+
+# Joint stiffness and damping
+stiff_joints:
+  use: false  # Whether to add stiffness and damping to the joints
+  joint_stiffness: 1  # Stiffness coefficient for the joints
+  joint_damping: 5    # Damping coefficient for the joints
+
+# Scenario settings
+scenario:
+  T: 3 # 1   # Total time horizon for the trajectory
+  N: 100 # 200    # Number of time steps in the trajectory
+  force_bounds: 80  # Maximum magnitude of the control forces
+  tracking: false  # Whether to include tracking terms in the cost function
+  initialization:
+    randomize: false  # Whether to randomize the initial conditions
+    at_rest: false     # Whether to start the pendulum at rest
+  actuation_idxs: [2, 4]  # Indices of the joints that are actuated (0-based indexing)
+
+# cache solution
+caching:
+  store: false  # Whether to store the solution for future use
+  load: true # Whether to load a previously stored solution if available
+
+# opti settings
+opti:
+  to_function: False # Leads to shape issues in visualizer -- to be debugged
+  code_generate: False # Not yet supported
+
+nb_runs: 5  # Number of runs to perform (for averaging)
+
+# visualizations
+visualize: true  # Whether to visualize the results
+
+# simulations
+simulate: false  # Does not work well

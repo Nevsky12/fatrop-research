@@ -1,0 +1,11 @@
+#include "fatrop/ip_algorithm/ip_initializer.hxx"
+#include "fatrop/ocp/type.hpp"
+#include "fatrop/ocp/problem_info.hpp"
+#include "fatrop/ocp/hessian.hpp"
+#include "fatrop/ocp/jacobian.hpp"
+
+using namespace fatrop;
+// explicit template instantiation
+template class fatrop::IpInitializer<OcpType>;
+template class fatrop::IpInitializer<ImplicitOcpType>;
+template class fatrop::IpInitializer<AcceleratedOcpType>;

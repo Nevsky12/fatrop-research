@@ -1,0 +1,11 @@
+{
+    "EXPLICIT": false,
+    "REFORMULATED": false,
+    "IMPLICIT": true,
+    "create_highlighted_visualizations": true,
+    "highlighted_options": {
+        "show_only_dynamics": true,
+        "show_LU_decomposition": true
+    },
+    "show_case_no_states_no_constraints": true
+}
