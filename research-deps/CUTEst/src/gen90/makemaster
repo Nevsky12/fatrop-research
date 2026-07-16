@@ -1,0 +1,54 @@
+#  Main body of the installation makefile for CUTEst generic GEN90 program
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-11-23
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name
+
+PACKAGE = GEN90
+package = gen90
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+$(PACKAGE) = $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+gen90 = $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  run example tests
+
+run_test: tools test_cutest $(OBJ)/gen90.o $(OBJ)/gen90_main.o
+	echo " Test of unconstrained gen90"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_test90 \
+            gen90_main.o gen90.o $(U_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/u_OUTSDIF.d ../gen90/OUTSDIF.d
+	- $(OBJ)/run_test90 >& ../gen90/u_test90.output
+	cat ../gen90/u_test90.output
+	rm $(OBJ)/run_test90 ../gen90/OUTSDIF.d
+	echo " Test of constrained gen90"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_test90 \
+            gen90_main.o gen90.o $(C_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/c_OUTSDIF.d ../gen90/OUTSDIF.d
+	- $(OBJ)/run_test90 >& ../gen90/c_test90.output
+	cat ../gen90/c_test90.output
+	rm $(OBJ)/run_test90 ../gen90/OUTSDIF.d
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

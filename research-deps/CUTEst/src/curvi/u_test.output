@@ -1,0 +1,25 @@
+
+                XL          X           XU        PROJ(G)
+X1         -1.0000E+20  0.0000E+00  1.0000E+20 -8.0000E+00
+X2         -1.0000E+20  0.0000E+00  1.0000E+20  0.0000E+00
+X3         -1.0000E+20  0.0000E+00  1.0000E+20  1.0000E+00
+X4         -1.0000E+20  0.0000E+00  1.0000E+20 -1.0000E+00
+X5         -1.0000E+20  0.0000E+00  1.0000E+20  0.0000E+00
+
+************************ CUTEst statistics ************************
+
+ Code used               :  CURVI
+ Problem                 :  ALLINITU3 
+ # variables             =               5
+ # objective functions   =            1.00
+ # objective gradients   =            2.00
+ # objective Hessians    =            1.00
+ # iterations            =               0
+ Exit code               =              -3
+ Final f                 =   1.3000000E+01
+ Final ||g||             =   8.0000000E+00
+ Set up time             =            0.00 seconds
+ Solve time              =            0.00 seconds
+
+******************************************************************
+

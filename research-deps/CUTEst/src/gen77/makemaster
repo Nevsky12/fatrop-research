@@ -1,0 +1,56 @@
+#  Main body of the installation makefile for CUTEst GEN programs
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-11-23
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name
+
+PACKAGE = GEN77
+package = gen77
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+$(PACKAGE) = $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+gen90 = $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  select specific run test
+
+# run example tests
+
+run_test: tools test_cutest $(OBJ)/$(package)_main.o $(OBJ)/$(package).o
+	echo " Test of unconstrained $(package)"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_test77 \
+            $(package)_main.o $(package).o $(U_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/u_OUTSDIF.d ../$(package)/OUTSDIF.d
+	- $(OBJ)/run_test77 >& ../$(package)/u_test77.output
+	cat ../$(package)/u_test77.output
+	rm $(OBJ)/run_test77 ../$(package)/OUTSDIF.d
+	echo " Test of constrained $(package)"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_test77 \
+            $(package)_main.o $(package).o $(C_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/c_OUTSDIF.d ../$(package)/OUTSDIF.d
+	- $(OBJ)/run_test77 >& ../$(package)/c_test77.output
+	cat ../$(package)/c_test77.output
+	rm $(OBJ)/run_test77 ../$(package)/OUTSDIF.d
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

@@ -1,0 +1,54 @@
+#  Main body of the installation makefile for CUTEst generic GENC program
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-11-23
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = genc
+package = genc
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+$(PACKAGE) = $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+$(package) = $(OBJ)/$(package).o  $(OBJ)/$(package)_main.o
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  run example tests
+
+run_test: tools test_cutest $(OBJ)/$(package).o $(OBJ)/$(package)_main.o
+	echo " Test of unconstrained $(package)"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_testc \
+            $(package)_main.o $(package).o $(U_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/u_OUTSDIF.d ../$(package)/OUTSDIF.d
+	- $(OBJ)/run_testc >& ../$(package)/u_testc.output
+	cat ../$(package)/u_testc.output
+	rm $(OBJ)/run_testc ../$(package)/OUTSDIF.d
+	echo " Test of constrained $(package)"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_testc \
+            $(package)_main.o $(package).o $(C_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/c_OUTSDIF.d ../$(package)/OUTSDIF.d
+	- $(OBJ)/run_testc >& ../$(package)/c_testc.output
+	cat ../$(package)/c_testc.output
+	rm $(OBJ)/run_testc ../$(package)/OUTSDIF.d
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

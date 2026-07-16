@@ -1,0 +1,78 @@
+#  Main body of the installation makefile for CUTEst Octave programs
+
+#  copied and modified from makefile for MATLAB, written
+#  by N. Gould, D. Orban and Ph. L. Toint.
+#  Adapted for Octave by Romana Jezek, 2023
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = OCTAVE_CUTEST
+package = octave
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  package
+
+SHELL = /bin/$(BINSHELL)
+
+#  Octave compiler
+
+#OCT = mkoctfile --mex -v
+OCT = mkoctfile --mex
+
+#  compiler flags
+
+OCTAVEINC = -I/usr/include/$(OCTAVE_VERSION)/octave/
+OFLAGS    = -g $(OCTAVEINC)
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  main compilations and runs
+
+all: $(package)
+
+#  basic packages
+
+$(package): $(package)_$(PRECIS)
+	@printf ' %-21s\n' "CUTEst: $(package) ($(PRECIS) $(SUCC)"
+$(package)_single: $(OBJS)/ocutest.o
+$(package)_double: $(OBJD)/ocutest.o
+
+#  compile tools
+
+tools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+utools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+ctools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+
+#  individual compilations
+
+#  ocutest
+
+ocutest.o: $(OBJ)/ocutest.o
+
+$(OBJ)/ocutest.o: ocutest.c
+	@printf ' %-9s %-15s\t\t' "Compiling" "ocutest"
+	$(CP) ocutest.c $(OBJ)/ocutest.c
+	cd $(OBJ) ; $(OCT) -c $(OFLAGS) -I$(CUTEST)/include ocutest.c
+	$(RM) $(OBJ)/ocutest.c
+	@printf '[ OK ]\n'
+
+

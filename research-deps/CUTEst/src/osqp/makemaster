@@ -1,0 +1,39 @@
+#  Main body of the installation makefile for CUTEst OSQP interface
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-12-04
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = OSQP
+package = osqp
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+EXTRAINCLUDES = -I$(CUTEST)/include/osqp
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  select specific run test
+
+run_test: run_qp_test
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

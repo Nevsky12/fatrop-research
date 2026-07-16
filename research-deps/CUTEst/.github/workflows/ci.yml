@@ -1,0 +1,94 @@
+name: ARCHDefs
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  build:
+    name: CUTEst/${{ matrix.os }}/${{ matrix.compiler }}-v${{ matrix.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            version: '14'
+            sifdecode_input: '1\n1\nN1\nNyy'
+            cutest_input: '1\n1\nN1\n2\n2\nNNyDyN'
+            arch: 'pc64.lnx.gfo'
+          - os: macos-latest
+            compiler: gcc
+            version: '14'
+            sifdecode_input: '2\nN1\nNyy'
+            cutest_input: '2\nN1\n2\n2\nNNyDyN'
+            arch: 'mac64.osx.gfo'
+    runs-on: ${{ matrix.os }}
+    env:
+      ARCHDEFS: ${{ github.workspace }}/ARCHDefs
+      SIFDECODE: ${{ github.workspace }}/SIFDecode
+      CUTEST: ${{ github.workspace }}
+      MASTSIF: ${{ github.workspace }}/sif
+    steps:
+      - name: Checkout CUTEst
+        uses: actions/checkout@v4
+      - name: Download ARCHDefs
+        id: download-archdefs
+        uses: robinraju/release-downloader@main
+        with:
+          repository: "ralna/ARCHDefs"
+          latest: true
+          tarBall: true
+          out-file-path: ""
+      - name: Unpack ARCHDefs
+        run: |
+          tar zxf ARCHDefs-${{ steps.download-archdefs.outputs.tag_name }}.tar.gz
+          mv ralna-ARCHDefs-* ARCHDefs
+      - name: Download SIFDecode
+        id: download-sifdecode
+        uses: robinraju/release-downloader@main
+        with:
+          repository: "ralna/SIFDecode"
+          latest: true
+          tarBall: true
+          out-file-path: ""
+      - name: Unpack SIFDecode
+        run: |
+          tar zxf SIFDecode-${{ steps.download-sifdecode.outputs.tag_name }}.tar.gz
+          mv ralna-SIFDecode-* SIFDecode
+      - name: Install compilers
+        uses: fortran-lang/setup-fortran@main
+        with:
+          compiler: ${{ matrix.compiler }}
+          version: ${{ matrix.version }}
+      - name: Install SIFDecode
+        run: |
+          export TERM=xterm
+          cd $SIFDECODE
+          printf "${{ matrix.sifdecode_input }}" > install_sifdecode_config
+          ./install_sifdecode < install_sifdecode_config
+      - name: Build
+        run: |
+          cd $CUTEST
+          printf "${{ matrix.cutest_input }}" > install_config
+          ./install_cutest < install_config
+      - name: Test double precision
+        run: |
+          export TERM=xterm
+          $CUTEST/bin/runcutest --help
+          $SIFDECODE/bin/sifdecoder -A ${{ matrix.arch }} ROSENBR
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p genc
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p gen77
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p gen90
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p stats
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p test --decode ALLINITU
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} -p test --decode ALLINITC
+      - name: Test single precision
+        run: |
+          export TERM=xterm
+          $SIFDECODE/bin/sifdecoder -sp -A ${{ matrix.arch }} ROSENBR
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} --single -p gen77
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} --single -p gen90
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} --single -p test --decode ALLINITU
+          $CUTEST/bin/runcutest -A ${{ matrix.arch }} --single -p test --decode ALLINITC

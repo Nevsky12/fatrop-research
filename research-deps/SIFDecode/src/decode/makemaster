@@ -1,0 +1,219 @@
+#  Main body of the installation makefile for the SIFDECODE decode package
+
+#  N. Gould, D. Orban and Ph. L. Toint.
+#  This version: 2025-09-11
+
+SHELL = /bin/$(BINSHELL)
+
+#  compiler flags
+
+FFLAGS    = $(BASIC) $(OPTIMIZATION) $(DEBUG) $(MODULES) $(F90) $(USUAL)
+FFLAGSS   = $(BASIC) $(OPTIMIZATION) $(DEBUG) $(MODULES) $(F90) $(SPECIAL)
+FFLAGSN   = $(BASIC) $(NOOPTIMIZATION) $(DEBUG) $(MODULES) $(F90)
+FFLAGS77  = $(BASIC) $(OPTIMIZATION) $(DEBUG) $(MODULES) $(F77) $(USUAL)
+FFLAGS77S = $(BASIC) $(OPTIMIZATION) $(DEBUG) $(MODULES) $(F77) $(SPECIAL)
+RUNFFLAGS =          $(OPTIMIZATION) $(DEBUG) $(MODULES)
+
+#  names of random libraries
+
+LS = $(OBJ)/libsifdecode.a
+
+#  Libraries used
+
+LIBS = -lsifdecode
+PLIBS = $(LIBS)
+
+#  Archive manipulation strings
+
+ARR = $(AR) $(ARREPFLAGS) $(LS)
+RMARFILE = $(SIFDECODE)/bin/rmarfile $(AR) $(GREP) $(LS)
+RMOBFILE = $(SIFDECODE)/bin/rmobfile $(RM) $(OBJ)
+
+#  compilation agenda
+
+SIFDECODES = $(LS)(sifdecode.o) $(LS)(sifdecoder_standalone.o) \
+             $(OBJ)/sifdecode_main.o $(OBJ)/sifdecoder_standalone_main.o
+
+#  main compilations and runs
+
+all: sifdecode
+
+#  basic packages
+
+sifdecode_silent: $(SIFDECODES)
+
+sifdecode: $(SIFDECODES)
+	$(RANLIB) $(LS)
+	@printf ' %-21s\n' "sifdecode: tools packages compiled successfully"
+
+# run example tests
+
+test: test_unconstrained test_constrained test_standalone
+
+test_unconstrained: $(SIFDECODES)
+	echo ""
+	echo " Decode unconstrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) ALLINITU
+	cd $(SIFDECODE)/sif/ ; \
+          $(RM) ELFUN*.* GROUP*.* RANGE*.* EXTER*.* OUTSDIF*.* 
+	echo ""
+	echo " Tests for unconstrained sifdecode complete"
+
+test_constrained: $(SIFDECODES)
+	echo ""
+	echo " Decode constrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) ALLINITC
+	cd $(SIFDECODE)/sif/ ; \
+          $(RM) ELFUN*.* GROUP*.* RANGE*.* EXTER*.* OUTSDIF*.* 
+	echo ""
+	echo " Tests for constrained sifdecode complete"
+
+test_standalone: $(SIFDECODES)
+	echo ""
+	echo " Decode SIF file using standalone "
+	echo " ** Call without any arguments -"
+	cd $(SIFDECODE)/sif/ ; $(OBJ)/sifdecoder_standalone
+	echo " ** Default call -"
+	cd $(SIFDECODE)/sif/ ; $(OBJ)/sifdecoder_standalone KISSING2
+	echo " ** Call with permitted non-default parameter -"
+	cd $(SIFDECODE)/sif/ ; \
+          $(OBJ)/sifdecoder_standalone -param "m=5" KISSING2
+	echo " ** Call with unpermitted non-default parameter -"
+	cd $(SIFDECODE)/sif/ ; \
+          $(OBJ)/sifdecoder_standalone -param "m=4" KISSING2
+	echo " ** Call with forced unpermitted non-default parameter -"
+	cd $(SIFDECODE)/sif/ ; \
+          $(OBJ)/sifdecoder_standalone -param "m=4" -force KISSING2
+	cd $(SIFDECODE)/sif/ ; \
+          $(RM) ELFUN*.* GROUP*.* RANGE*.* EXTER*.* OUTSDIF*.* 
+	echo ""
+	echo " ** Call with added suffices -"
+	cd $(SIFDECODE)/sif/ ; \
+          $(OBJ)/sifdecoder_standalone -suffix KISSING2
+	cd $(SIFDECODE)/sif/ ; \
+          echo " files: " ELFUN*.* GROUP*.* RANGE*.* OUTSDIF*.*  || true
+	echo ""
+	echo " ** Call with added suffices deleting prepended pathname  -"
+	cd $(SIFDECODE)/sif/ ; \
+          $(OBJ)/sifdecoder_standalone -suffix $(SIFDECODE)/sif/KISSING2
+	cd $(SIFDECODE)/sif/ ; \
+          echo " files: " ELFUN*.* GROUP*.* RANGE*.* OUTSDIF*.*  || true
+	cd $(SIFDECODE)/sif/ ; \
+          $(RM) ELFUN*.* GROUP*.* RANGE*.* EXTER*.* OUTSDIF*.* 
+	echo ""
+	echo " Standalone test for sifdecode complete"
+
+test_single: test_unconstrained_single test_constrained_single
+
+test_unconstrained_single: $(SIFDECODES)
+	echo ""
+	echo " Decode unconstrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) -sp ALLINITU
+	echo ""
+	echo " Tests for unconstrained sifdecode complete"
+
+test_constrained_single: $(SIFDECODES)
+	echo ""
+	echo " Decode constrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) -sp ALLINITC
+	echo ""
+	echo " Tests for constrained sifdecode complete"
+
+test_quadruple: test_unconstrained_quadruple test_constrained_quadruple
+
+test_unconstrained_quadruple: $(SIFDECODES)
+	echo ""
+	echo " Decode unconstrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) -qp ALLINITU
+	echo ""
+	echo " Tests for unconstrained sifdecode complete"
+
+test_constrained_quadruple: $(SIFDECODES)
+	echo ""
+	echo " Decode constrained SIF file"
+	cd $(SIFDECODE)/sif/ ; \
+          $(SIFDECODE)/bin/sifdecoder -A $(VERSION) -qp ALLINITC
+	echo ""
+	echo " Tests for constrained sifdecode complete"
+
+#  individual compilations
+
+sifdecode.o: $(LS)(sifdecode.o)
+
+$(LS)(sifdecode.o): ../decode/sifdecode.f90
+	@printf ' %-9s %-15s\t\t' "Compiling" "sifdecode"
+	$(CP) ../decode/sifdecode.f90 $(OBJ)/sifdecode.f90
+	cd $(OBJ); $(FORTRAN) -o sifdecode.o $(FFLAGS) sifdecode.f90 \
+                || ( printf ' %-26s' "=> Disabling optimization " ; \
+                   $(FORTRAN) -o sifdecode.o $(FFLAGSN) sifdecode.f90 )
+	cd $(OBJ); $(ARR) sifdecode.o; $(RM) sifdecode.f90 sifdecode.o
+	$(RMOBFILE) sifdecode_main.o
+	$(MVMODS)
+	@printf '[ OK ]\n'
+
+sifdecoder_standalone.o: $(LS)(sifdecoder_standalone.o)
+
+$(LS)(sifdecoder_standalone.o): ../decode/sifdecoder_standalone.f90
+	@printf ' %-9s %-15s\t' "Compiling" "sifdecoder_standalone"
+	$(CP) ../decode/sifdecoder_standalone.f90 \
+          $(OBJ)/sifdecoder_standalone.f90
+	cd $(OBJ); $(FORTRAN) -o sifdecoder_standalone.o $(FFLAGS) \
+                     sifdecoder_standalone.f90 \
+                || ( printf ' %-26s' "=> Disabling optimization " ; \
+                   $(FORTRAN) -o sifdecoder_standalone.o $(FFLAGSN) \
+                      sifdecoder_standalone.f90 )
+	cd $(OBJ); $(ARR) sifdecoder_standalone.o; \
+          $(RM) sifdecoder_standalone.f90 sifdecoder_standalone.o
+	$(RMOBFILE) sifdecoder_standalone_main.o
+	$(MVMODS)
+	@printf '[ OK ]\n'
+
+#  main programs
+
+sifdecode_main.o: $(OBJ)/sifdecode_main.o
+
+$(OBJ)/sifdecode_main.o: ../decode/sifdecode_main.f90
+	@printf ' %-9s %-15s\t\t' "Compiling" "sifdecode_main"
+	$(CP) ../decode/sifdecode_main.f90 $(OBJ)/sifdecode_main.f90
+	cd $(OBJ); $(FORTRAN) -o sifdecode_main.o $(FFLAGS) sifdecode_main.f90 \
+          || ( printf ' %-26s' "=> Disabling optimization " ; \
+            $(FORTRAN) -o sifdecode_main.o $(FFLAGSN) sifdecode_main.f90 )
+	cd $(OBJ); $(FORTRAN) -o run_sifdecode $(RUNFFLAGS) \
+          sifdecode_main.o -L$(OBJ) $(PLIBS) ; $(RM) sifdecode_main.f90
+	cd $(OBJ); $(RM) sifdecode_main.f90
+	@printf '[ OK ]\n'
+
+sifdecoder_standalone_main.o: $(OBJ)/sifdecoder_standalone_main.o
+
+$(OBJ)/sifdecoder_standalone_main.o: ../decode/sifdecoder_standalone_main.f90
+	@printf ' %-9s %-15s\t' "Compiling" "sifdecoder_standalone_main"
+	$(CP) ../decode/sifdecoder_standalone_main.f90 \
+          $(OBJ)/sifdecoder_standalone_main.f90
+	cd $(OBJ); $(FORTRAN) -o sifdecoder_standalone_main.o \
+                     $(FFLAGS) sifdecoder_standalone_main.f90 \
+          || ( printf ' %-26s' "=> Disabling optimization " ; \
+            $(FORTRAN) -o sifdecoder_standalone_main.o \
+                     $(FFLAGSN) sifdecoder_standalone_main.f90 )
+	cd $(OBJ); $(FORTRAN) -o sifdecoder_standalone $(RUNFFLAGS) \
+          sifdecoder_standalone_main.o -L$(OBJ) $(PLIBS) ; \
+            $(RM) sifdecoder_standalone_main.f90
+	cd $(OBJ); $(RM) sifdecoder_standalone_main.f90
+	@printf '[ OK ]\n'
+
+#  book keeping
+
+clean:
+	@printf ' %-9s\t\t' "Cleaning"
+	$(RM) $(OBJ)/*
+	@printf '[ OK ]\n'
+
+cleanall:
+	@printf ' %-14s\t\t' \
+          "Removing all decode object and module files"
+	$(RM) $(OBJ)/* $(MOD)/*
+	@printf '[ OK ]\n'

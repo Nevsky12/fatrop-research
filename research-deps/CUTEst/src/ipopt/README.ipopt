@@ -1,0 +1,71 @@
+                      **********************************
+		      *                                *
+                      * Using IPOPT >= 3.0 with CUTEst *
+		      *                                *
+                      **********************************
+
+WHAT IS IPOPT?
+--------------
+
+IPOPT is an implementation of a primal-dual interior point algorithm
+for solving Nonlinear Optimization Problems (NLPs) of the form
+
+min    f(x)                   (1)
+s.t.   c(x) = 0               (2)
+       x_L <= x <= x_U        (3)
+
+The objective function f: R^n ---> R and the equality constraints
+c: R^n ---> R^m (m <=n) are assumed to be twice continuously
+differentiable and can be nonlinear and nonconvex.  In (3), not all
+variables need to have lower and upper bounds.
+
+HOW DO I GET IPOPT?
+-------------------
+
+See
+
+  https://www.coin-or.org/Ipopt/documentation
+
+USING IPOPT 3.0 AND ABOVE WITH CUTEst
+-------------------------------------
+
+Follow the instructions on the installation page above. In particular,
+get the code, download the external codes and compile and
+install. Set your environment variable IPOPTBUILD to point at the
+directory $IPOPTDIR/build that you have installed your version of ipopt
+into. If you are using gfortran, that should be sufficient.
+
+If you are using a different compiler, you need to discover the
+compiler flags suited to your installation. Look at the file
+$CUTEST/packages/defaults/ipopt, particularly the variable PACKLIBS
+and edit as necessary.
+
+USING THE IPOPT 3.0 INTERFACE TOOL
+----------------------------------
+
+Suppose you wish to solve the problem written in SIF format contained
+in the file probname.SIF.
+
+The IPOPT 3.0 interface tools require one (and optionally two) input files:
+
+	probname.SIF   specifies the problem in SIF format
+	ipopt.opt      optionally specifies solver options (see
+            https://www.coin-or.org/Ipopt/documentation/node35.html )
+
+Please refer to the IPOPT 3.0 documentation for more details.
+
+To run with CUTEst, use the runcutest command with the -p ipopt option.
+See the man page for runcutest for more details of other options.
+
+REFERENCES
+----------
+
+[1] An Interior Point Algorithm for Large-Scale Nonlinear Optimization
+    with Applications in Process Engineering.
+    A. Wachter. PhD Dissertation, Carnegie Mellon University, Pittsburgh,
+    PA, 2002.
+
+[2]  A. Wächter and L. T. Biegler,
+     On the Implementation of an Interior-Point Filter Line-Search Algorithm
+     for Large-Scale Nonlinear Programming,
+     Mathematical Programming 106(1), pp. 25-57, 2006

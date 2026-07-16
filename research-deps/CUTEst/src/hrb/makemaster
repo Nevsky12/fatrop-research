@@ -1,0 +1,45 @@
+#  Main body of the installation makefile for CUTEst HRB interface
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-11-20
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = HRB
+package = hrb
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  run example test
+
+run_test: tools test_cutest_constrained $(package)
+	echo " Test of constrained $(package)"
+	cd $(OBJ) ; $(FORTRAN) $(RUNFFLAGS) $(SPECIAL) -o run_test \
+            $(package)_main.o $(C_TEST) -L$(OBJ) $(LIBS)
+	ln -fs $(CUTEST)/src/test/c_OUTSDIF.d ../$(package)/OUTSDIF.d
+	- $(OBJ)/run_test < ../$(package)/c_test.input \
+           >& ../$(package)/c_test.output
+	cat ../$(package)/c_test.output
+	cat ../$(package)/ALLINITC.aug
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

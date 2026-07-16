@@ -1,0 +1,629 @@
+#  Main body of the installation makefile for the CUTEST packages
+
+#  N. Gould, D. Orban and Ph. L. Toint.
+#  This version: 8 April 2024
+
+SHELL = /bin/$(BINSHELL)
+
+#  shorthands for real precision and integer lengths control
+
+S32 = PRECIS=single
+D32 = PRECIS=double
+Q32 = PRECIS=quadruple
+S64 = PRECIS=single_64 INTEGER=64bit
+D64 = PRECIS=double_64 INTEGER=64bit
+Q64 = PRECIS=quadruple_64 INTEGER=64bit
+
+#  main compilations and runs
+
+#  all tools and interfaces
+#  for the time being, only process 64bit tools and tests, not interfaces
+
+all: all_$(PRECIS)
+all_single: tools_single
+	( cd algencan  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   algencan $(S32) PWD=$(PWD)/algencan )
+	( cd bobyqa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   bobyqa $(S32) PWD=$(PWD)/bobyqa )
+	( cd cg_descent  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cg_descent  $(S32) PWD=$(PWD)/cg_descent )
+	( cd cgplus  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cgplus  $(S32) PWD=$(PWD)/cgplus )
+	( cd cobyla  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cobyla  $(S32) PWD=$(PWD)/cobyla )
+	( cd derchk  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   derchk  $(S32) PWD=$(PWD)/derchk )
+	( cd dfo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   dfo  $(S32) PWD=$(PWD)/dfo )
+	( cd directsearch ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   directsearch  $(S32) PWD=$(PWD)/directsearch )
+	( cd e04nqf  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   e04nqf  $(S32) PWD=$(PWD)/e04nqf )
+	( cd filtersd  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   filtersd  $(S32) PWD=$(PWD)/filtersd )
+	( cd filtersqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   filtersqp  $(S32) PWD=$(PWD)/filtersqp )
+	( cd gen77  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gen77  $(S32) PWD=$(PWD)/gen77 )
+	( cd gen90  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gen90  $(S32) PWD=$(PWD)/gen90 )
+	( cd genc  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   genc  $(S32) PWD=$(PWD)/genc )
+	( cd hrb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   hrb  $(S32) PWD=$(PWD)/hrb )
+	( cd ipopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ipopt  $(S32) PWD=$(PWD)/ipopt )
+#	( cd knitro  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#                   knitro  $(S32) PWD=$(PWD)/knitro )
+	( cd la04  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   la04  $(S32) PWD=$(PWD)/la04 )
+	( cd lbfgs  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lbfgs  $(S32) PWD=$(PWD)/lbfgs )
+	( cd lbfgsb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lbfgsb  $(S32) PWD=$(PWD)/lbfgsb )
+	( cd lincoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lincoa  $(S32) PWD=$(PWD)/lincoa )
+#	( cd loqo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#                   loqo  $(S32) PWD=$(PWD)/loqo )
+	( cd minos  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   minos  $(S32) PWD=$(PWD)/minos )
+	( cd newuoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   newuoa  $(S32) PWD=$(PWD)/newuoa )
+	( cd nitsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   nitsol  $(S32) PWD=$(PWD)/nitsol )
+	( cd nlpqlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   nlpqlp  $(S32) PWD=$(PWD)/nlpqlp )
+	( cd npsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   npsol  $(S32) PWD=$(PWD)/npsol )
+	( cd osqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   osqp  $(S32) PWD=$(PWD)/osqp )
+	( cd pds  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   pds  $(S32) PWD=$(PWD)/pds )
+	( cd pennlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   pennlp  $(S32) PWD=$(PWD)/pennlp )
+	( cd praxis  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   praxis  $(S32) PWD=$(PWD)/praxis )
+	( cd ql  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ql  $(S32) PWD=$(PWD)/ql )
+#	( cd qplib ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#                   qplib  $(S32) PWD=$(PWD)/qplib )
+	( cd snopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   snopt  $(S32) PWD=$(PWD)/snopt )
+	( cd spg  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   spg  $(S32) PWD=$(PWD)/spg )
+	( cd stats  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   stats  $(S32) PWD=$(PWD)/stats )
+	( cd stenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   stenmin  $(S32) PWD=$(PWD)/stenmin )
+	( cd tenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tenmin  $(S32) PWD=$(PWD)/tenmin )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   test  $(S32) PWD=$(PWD)/test )
+	( cd trial  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   trial  $(S32) PWD=$(PWD)/trial )
+	( cd tron  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tron  $(S32) PWD=$(PWD)/tron )
+	( cd uncmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   uncmin  $(S32) PWD=$(PWD)/uncmin )
+#	( cd uno  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#                   uno  $(S32) PWD=$(PWD)/uno )
+	( cd vf13  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   vf13  $(S32) PWD=$(PWD)/vf13 )
+#	( cd worhp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#                  worhp  $(S32) PWD=$(PWD)/worhp )
+all_double: tools_double
+	( cd algencan  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   algencan $(D32) PWD=$(PWD)/algencan )
+	( cd bobyqa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   bobyqa $(D32) PWD=$(PWD)/bobyqa )
+	( cd cg_descent  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cg_descent  $(D32) PWD=$(PWD)/cg_descent )
+	( cd cgplus  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cgplus  $(D32) PWD=$(PWD)/cgplus )
+	( cd cobyla  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   cobyla  $(D32) PWD=$(PWD)/cobyla )
+	( cd derchk  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   derchk  $(D32) PWD=$(PWD)/derchk )
+	( cd dfo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   dfo  $(D32) PWD=$(PWD)/dfo )
+	( cd directsearch ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   directsearch  $(D32) PWD=$(PWD)/directsearch )
+	( cd e04nqf  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   e04nqf  $(D32) PWD=$(PWD)/e04nqf )
+	( cd filtersd  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   filtersd  $(D32) PWD=$(PWD)/filtersd )
+	( cd filtersqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   filtersqp  $(D32) PWD=$(PWD)/filtersqp )
+	( cd gen77  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gen77  $(D32) PWD=$(PWD)/gen77 )
+	( cd gen90  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gen90  $(D32) PWD=$(PWD)/gen90 )
+	( cd genc  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   genc  $(D32) PWD=$(PWD)/genc )
+	( cd hrb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   hrb  $(D32) PWD=$(PWD)/hrb )
+	( cd ipopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ipopt  $(D32) PWD=$(PWD)/ipopt )
+	( cd knitro  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   knitro  $(D32) PWD=$(PWD)/knitro )
+	( cd la04  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   la04  $(D32) PWD=$(PWD)/la04 )
+	( cd lbfgs  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lbfgs  $(D32) PWD=$(PWD)/lbfgs )
+	( cd lbfgsb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lbfgsb  $(D32) PWD=$(PWD)/lbfgsb )
+	( cd lincoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   lincoa  $(D32) PWD=$(PWD)/lincoa )
+	( cd loqo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   loqo  $(D32) PWD=$(PWD)/loqo )
+	( cd minos  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   minos  $(D32) PWD=$(PWD)/minos )
+	( cd newuoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   newuoa  $(D32) PWD=$(PWD)/newuoa )
+	( cd nitsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   nitsol  $(D32) PWD=$(PWD)/nitsol )
+	( cd nlpqlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   nlpqlp  $(D32) PWD=$(PWD)/nlpqlp )
+	( cd npsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   npsol  $(D32) PWD=$(PWD)/npsol )
+	( cd osqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   osqp  $(D32) PWD=$(PWD)/osqp )
+	( cd pds  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   pds  $(D32) PWD=$(PWD)/pds )
+	( cd pennlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   pennlp  $(D32) PWD=$(PWD)/pennlp )
+	( cd praxis  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   praxis  $(D32) PWD=$(PWD)/praxis )
+	( cd ql  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ql  $(D32) PWD=$(PWD)/ql )
+	( cd qplib ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   qplib  $(D32) PWD=$(PWD)/qplib )
+	( cd snopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   snopt  $(D32) PWD=$(PWD)/snopt )
+	( cd spg  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   spg  $(D32) PWD=$(PWD)/spg )
+	( cd stats  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   stats  $(D32) PWD=$(PWD)/stats )
+	( cd stenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   stenmin  $(D32) PWD=$(PWD)/stenmin )
+	( cd tenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tenmin  $(D32) PWD=$(PWD)/tenmin )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   test  $(D32) PWD=$(PWD)/test )
+	( cd trial  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   trial  $(D32) PWD=$(PWD)/trial )
+	( cd tron  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tron  $(D32) PWD=$(PWD)/tron )
+	( cd uncmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   uncmin  $(D32) PWD=$(PWD)/uncmin )
+	( cd uno  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   uno  $(D32) PWD=$(PWD)/uno )
+	( cd vf13  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   vf13  $(D32) PWD=$(PWD)/vf13 )
+	( cd worhp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   worhp  $(D32) PWD=$(PWD)/worhp )
+all_quadruple: tools_quadruple
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   test  $(Q32) PWD=$(PWD)/test )
+all_single_64: tools_single_64
+all_double_64: tools_double_64
+all_quadruple_64: tools_quadruple_64
+
+#  all tools (including fortran 2008) and interfaces
+
+all_2008: all_2008_$(PRECIS)
+all_2008_single: all_single
+	( cd ral_nlls  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ral_nlls  $(S32) PWD=$(PWD)/ral_nlls )
+	( cd sqic  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   sqic  $(S32) PWD=$(PWD)/sqic )
+all_2008_double: all_double
+	( cd ral_nlls  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ral_nlls  $(D32) PWD=$(PWD)/ral_nlls )
+	( cd sqic  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   sqic  $(D32) PWD=$(PWD)/sqic )
+all_2008_quadruple: all_quadruple
+	( cd ral_nlls  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   ral_nlls  $(Q32) PWD=$(PWD)/ral_nlls )
+	( cd sqic  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   sqic  $(Q32) PWD=$(PWD)/sqic )
+all_2008_single_64: all_single_64
+all_2008_double_64: all_double_64
+all_2008_quadruple_64: all_quadruple_64
+
+#  all tools (including gsl) and interfaces
+
+all_with_gsl: all_with_gsl_$(PRECIS)
+all_with_gsl_single: all_single
+	( cd gsl  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gsl  $(S32) PWD=$(PWD)/gsl )
+all_with_gsl_double: all_double
+	( cd gsl  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gsl  $(D32) PWD=$(PWD)/gsl )
+all_with_gsl_quadruple: all_quadruple
+	( cd gsl  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   gsl  $(Q32) PWD=$(PWD)/gsl )
+all_with_gsl_single_64: all_single_64
+all_with_gsl_double_64: all_double_64
+all_with_gsl_quadruple_64: all_quadruple_64
+
+#  all tools (including tao) and interfaces
+
+all_with_tao: all_with_tao_$(PRECIS)
+all_with_tao_single: all_single
+	( cd tao  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tao  $(S32) PWD=$(PWD)/tao )
+all_with_tao_double: all_double
+	( cd tao  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tao  $(D32) PWD=$(PWD)/tao )
+all_with_tao_quadruple: all_quadruple
+	( cd tao  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                   tao  $(Q32) PWD=$(PWD)/tao )
+all_with_tao_single_64: all_single_64
+all_with_tao_double_64: all_double_64
+all_with_tao_quadruple_64: all_quadruple_64
+
+# all tools
+
+tools: tools_$(PRECIS)
+tools_single:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(S32) PWD=$(PWD)/tools )
+tools_double:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(D32) PWD=$(PWD)/tools )
+tools_quadruple:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(Q32) PWD=$(PWD)/tools )
+tools_single_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(S64) PWD=$(PWD)/tools )
+tools_double_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(D64) PWD=$(PWD)/tools )
+tools_quadruple_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest $(Q64) PWD=$(PWD)/tools )
+
+#  all tools and their matlab interface
+
+all_matlab: all_matlab_$(PRECIS)
+all_matlab_single: tools_single
+	( cd matlab ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                       all $(S32) PWD=$(PWD)/matlab )
+all_matlab_double: tools_double
+	( cd matlab ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                       all $(D32) PWD=$(PWD)/matlab )
+all_matlab_single_64: tools_single_64
+all_matlab_double_64: tools_double_64
+
+#  all tools and their octave interface
+
+all_octave: all_octave_$(PRECIS)
+all_octave_single: tools_single
+	( cd octave ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                       all $(S32) PWD=$(PWD)/octave )
+all_octave_double: tools_double
+	( cd octave ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                       all $(D32) PWD=$(PWD)/octave )
+all_octave_single_64: tools_single_64
+all_octave_double_64: tools_double_64
+
+# all interface tests
+
+test: test_$(PRECIS)
+test_single:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(S32) PWD=$(PWD)/test )
+test_double:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(D32) PWD=$(PWD)/test )
+test_quadruple:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(Q32) PWD=$(PWD)/test )
+test_single_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(S64) PWD=$(PWD)/test )
+test_double_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(D64) PWD=$(PWD)/test )
+test_quadruple_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest $(Q64) PWD=$(PWD)/test )
+
+# comprehensive tools tests
+
+run_tools_test: run_tools_test_$(PRECIS)
+run_tools_test_single:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(S32) PWD=$(PWD)/test )
+run_tools_test_double:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(D32) PWD=$(PWD)/test )
+run_tools_test_quadruple:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(Q32) PWD=$(PWD)/test )
+run_tools_test_single_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(S64) PWD=$(PWD)/test )
+run_tools_test_double_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(D64) PWD=$(PWD)/test )
+run_tools_test_quadruple_64:
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     run_test_cutest $(Q64) PWD=$(PWD)/test )
+
+# all unconstrained tools and interface tests
+
+all_unconstrained: all_unconstrained_$(PRECIS)
+all_unconstrained_single:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(S32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(S32) PWD=$(PWD)/test )
+all_unconstrained_double:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(D32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(D32) PWD=$(PWD)/test )
+all_unconstrained_quadruple:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(Q32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(Q32) PWD=$(PWD)/test )
+all_unconstrained_single_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(S64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(S64) PWD=$(PWD)/test )
+all_unconstrained_double_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(D64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(D64) PWD=$(PWD)/test )
+all_unconstrained_quadruple_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained $(Q64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_unconstrained $(Q64) PWD=$(PWD)/test )
+
+# all constrained tools and interface tests
+
+all_constrained: all_constrained_$(PRECIS)
+all_constrained_single:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(S32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(S32) PWD=$(PWD)/test )
+all_constrained_double:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(D32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(D32) PWD=$(PWD)/test )
+all_constrained_quadruple:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(Q32) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(Q32) PWD=$(PWD)/test )
+all_constrained_single_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(S64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(S64) PWD=$(PWD)/test )
+all_constrained_double_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(D64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(D64) PWD=$(PWD)/test )
+all_constrained_quadruple_64:
+	( cd tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained $(Q64) PWD=$(PWD)/tools )
+	( cd test  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     test_cutest_constrained $(Q64) PWD=$(PWD)/test )
+
+# all tests
+
+run_test: run_test_$(PRECIS)
+run_test_single: tools_single test_single
+	( cd algencan  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/algencan )
+	( cd bobyqa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/bobyqa )
+	( cd cg_descent  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/cg_descent )
+	( cd cgplus  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/cgplus )
+	( cd cobyla  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/cobyla )
+	( cd derchk  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/derchk )
+	( cd dfo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/dfo )
+	( cd e04nqf  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/e04nqf )
+	( cd filtersd  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/filtersd )
+	( cd filtersqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/filtersqp )
+	( cd gen77  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/gen77 )
+	( cd gen90  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/gen90 )
+	( cd genc  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/genc )
+#	( cd gsl  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(S32) PWD=$(PWD)/gsl )
+	( cd hrb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/hrb )
+	( cd ipopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/ipopt )
+#	( cd knitro  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#            run_test $(S32) PWD=$(PWD)/knitro )
+	( cd la04  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/la04 )
+	( cd lbfgs  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/lbfgs )
+	( cd lbfgsb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/lbfgsb )
+	( cd lincoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/lincoa )
+	( cd minos  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/minos )
+	( cd newuoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/newuoa )
+	( cd nitsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/nitsol )
+	( cd nlpqlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/nlpqlp )
+	( cd npsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/npsol )
+	( cd osqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/osqp )
+	( cd pds  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/pds )
+	( cd pennlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/pennlp )
+	( cd praxis  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/praxis )
+	( cd ql  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/ql )
+	( cd snopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/snopt )
+	( cd spg  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(S32) PWD=$(PWD)/spg )
+	( cd stats  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/stats )
+	( cd stenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/stenmin )
+	( cd tenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/tenmin )
+	( cd tron  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/tron )
+	( cd uncmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/uncmin )
+#	( cd uno  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(S32) PWD=$(PWD)/uno )
+	( cd vf13  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(S32) PWD=$(PWD)/vf13 )
+#	( cd worhp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(S32) PWD=$(PWD)/worhp )
+
+run_test_double: tools_double test_double
+	( cd algencan  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/algencan )
+	( cd bobyqa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/bobyqa )
+	( cd cg_descent  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/cg_descent )
+	( cd cgplus  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/cgplus )
+	( cd cobyla  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/cobyla )
+	( cd derchk  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/derchk )
+	( cd dfo  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/dfo )
+	( cd e04nqf  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/e04nqf )
+	( cd filtersd  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/filtersd )
+	( cd filtersqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/filtersqp )
+	( cd gen77  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/gen77 )
+	( cd gen90  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/gen90 )
+	( cd genc  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/genc )
+#	( cd gsl  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(D32) PWD=$(PWD)/gsl )
+	( cd hrb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/hrb )
+	( cd ipopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/ipopt )
+	( cd knitro  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/knitro )
+	( cd la04  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/la04 )
+	( cd lbfgs  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/lbfgs )
+	( cd lbfgsb  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/lbfgsb )
+	( cd lincoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/lincoa )
+	( cd minos  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/minos )
+	( cd newuoa  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/newuoa )
+	( cd nitsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/nitsol )
+	( cd nlpqlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/nlpqlp )
+	( cd npsol  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/npsol )
+	( cd osqp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/osqp )
+	( cd pds  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/pds )
+	( cd pennlp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/pennlp )
+	( cd praxis  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/praxis )
+	( cd ql  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/ql )
+	( cd snopt  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/snopt )
+	( cd spg  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test  $(D32) PWD=$(PWD)/spg )
+	( cd stats  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/stats )
+	( cd stenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/stenmin )
+	( cd tenmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/tenmin )
+	( cd tron  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/tron )
+	( cd uncmin  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/uncmin )
+	( cd uno  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/uno )
+	( cd vf13  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+             run_test $(D32) PWD=$(PWD)/vf13 )
+#	( cd worhp  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(D32) PWD=$(PWD)/worhp )
+run_test_single_64: tools_single_64 test_single_64
+run_test_double_64: tools_double_64 test_double_64
+
+run_test_quadruple: tools_quadruple test_quadruple
+
+
+
+#  all tools (including fortran 2008) and interfaces
+
+run_test_2008: run_test_2008_$(PRECIS)
+run_test_2008_single: run_test_single
+#	( cd ral_nlls ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(S32) PWD=$(PWD)/ral_nlls )
+#	( cd sqic  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+#             run_test $(S32) PWD=$(PWD)/sqic )
+run_test_2008_double: run_test_double
+	( cd ral_nlls ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+              run_test $(D32) PWD=$(PWD)/ral_nlls )
+	( cd sqic  ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+              run_test $(D32) PWD=$(PWD)/sqic )
+run_test_2008_single_64: run_test_single_64
+run_test_2008_double_64: run_test_double_64
+
+#  book keeping
+
+clean:
+	@printf ' %-9s\t\t' "Cleaning"
+	$(RM) $(OBJ)/*
+	@printf '[ OK ]\n'
+
+cleanall:
+	@printf ' %-14s\t\t' \
+          "Removing all $(PRECIS) precision object and module files"
+	$(RM) $(OBJ)/* $(MOD)/*
+#	ls $(OBJ) $(MOD)
+	@printf '[ OK ]\n'

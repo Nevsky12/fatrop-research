@@ -1,0 +1,40 @@
+#  Main body of the installation makefile for the SIFDECODE packages
+
+#  N. Gould, D. Orban and Ph. L. Toint.
+#  This version: 2023-10-24
+
+SHELL = /bin/$(BINSHELL)
+
+#  main compilations and runs
+
+all:
+	( cd decode ; $(MAKE) -f $(SIFDECODE)/makefiles/$(VERSION) \
+                     sifdecode PWD=$(PWD)/decode )
+	( cd check ; $(MAKE) -f $(SIFDECODE)/makefiles/$(VERSION) \
+                     check_derivs PWD=$(PWD)/check )
+	( cd select  ; $(MAKE) -f $(SIFDECODE)/makefiles/$(VERSION) \
+                     select PWD=$(PWD)/select )
+
+#  main compilations and runs
+
+test:
+	( cd decode ; $(MAKE) -f $(SIFDECODE)/makefiles/$(VERSION) \
+                     test PWD=$(PWD)/decode )
+
+test_standalone:
+	( cd decode ; $(MAKE) -f $(SIFDECODE)/makefiles/$(VERSION) \
+                     test_standalone PWD=$(PWD)/decode )
+
+#  book keeping
+
+clean:
+	@printf ' %-9s\t\t' "Cleaning"
+	$(RM) $(OBJ)/*
+	@printf '[ OK ]\n'
+
+cleanall:
+	@printf ' %-14s\t\t' \
+          "Removing all sifdecode object and module files"
+	$(RM) $(OBJ)/* $(MOD)/*
+#	ls $(OBJ) $(MOD)
+	@printf '[ OK ]\n'

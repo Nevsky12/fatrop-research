@@ -1,0 +1,55 @@
+tools
+test
+stats
+
+
+* algencan
+* bobyqa
+* cg_descent
+* cgplus
+* cobyla
+* curvi
+* derchk
+* dfo
+* directsearch
+* e04nqf
+* filtersd
+* filtersqp
+* gen77
+* gen90
+* genc
+* gsl           (no single)
+* highs
+* hrb
+* ipopt
+* knitro        (no single)
+* la04
+* lbfgs
+* lbfgsb
+* lincoa
+* loqo          (no single)
+* matlab
+* minos
+* newuoa
+* nitsol
+* nlpqlp
+* nomad
+* npsol
+* octave
+* osqp
+* pds
+* pennlp
+* praxis
+* ql
+* qplib
+* ral_nlls
+* snopt
+* spg
+* sqic
+* stenmin
+- tao          (broken)
+* tenmin
+* tron
+* uncmin
+* vf13
+* worhp        (no single)

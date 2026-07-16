@@ -1,0 +1,57 @@
+#include <moto/core/external_function.hpp>
+#include <moto/ocp/cost.hpp>
+#include <moto/utils/codegen.hpp>
+
+namespace moto {
+void generic_cost::finalize_impl() {
+    if (use_gauss_newton_) {
+        if (!gn_weight_) {
+            throw std::runtime_error(fmt::format("cost {} gauss-newton weight not set. Did you provide a non-scalar output ?", name_));
+        }
+        add_argument(gn_weight_);
+        skip_unused_arg_check_.insert(gn_weight_->uid());
+        if (gen_.task_) {
+            gen_.task_->gauss_newton = true;
+            gen_.task_->weight_gn = gn_weight_;
+        } else {
+            /// @todo use gn_weight_ to scale the hessian
+            hessian = [](func_approx_data &d) {
+            // Gauss-Newton approximation: H ≈ J^T * J
+                for (size_t i = 0; i < d.lag_hess_.size(); i++) {
+                    for (size_t j = 0; j < d.lag_hess_[i].size(); j++) {
+                        if (d.lag_hess_[i][j].size() > 0) {
+                            d.lag_hess_[i][j].noalias() += d.jac_[i].transpose() * d.jac_[j];
+                        }
+                    }
+                }
+            };
+        }
+    }
+    // finalize the base class
+    generic_func::finalize_impl();
+    return;
+}
+
+generic_cost::generic_cost(const std::string &name, approx_order order)
+    : generic_func(name, order, 1, __cost) {}
+
+generic_cost::generic_cost(const std::string &name, const var_inarg_list &in_args, const cs::SX &out, approx_order order)
+    : generic_func(name, in_args, out, order, __cost) {
+    // assert(out.is_scalar() && "cost output must be a scalar");
+    if (!out.is_scalar()) {
+        use_gauss_newton_ = true;
+    }
+}
+
+generic_cost *generic_cost::set_diag_hess() {
+    set_default_hess_sparsity(sparsity::diag);
+    return this;
+}
+
+generic_cost *generic_cost::set_gauss_newton(const var &weight) {
+    gn_weight_ = weight;
+    use_gauss_newton_ = true;
+    return this;
+}
+
+} // namespace moto

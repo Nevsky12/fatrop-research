@@ -1,0 +1,60 @@
+#  Main body of the installation makefile for CUTEst RAL_NLLS interface
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-11-16
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = RAL_NLLS
+package = ral_nlls
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  select specific run test
+
+run_test: run_constrained_test
+
+#  non-standard package compilation instructions
+
+$(OBJ)/$(package)_main.o: $(OBJ)/$(package)_test.o \
+                           ../$(package)/$(package)_main.F90
+	@printf ' %-9s %-15s\t\t' "Compiling" "$(package)_main"
+	$(CP) ../$(package)/$(package)_main.F90 $(OBJ)/$(package)_main.F90
+	cd $(OBJ); $(FORTRAN) -o $(package)_main.o $(F90FLAGS) $(CPPFLAGS) \
+             $(package)_main.F90 \
+              || ( printf ' %-26s' "=> Disabling optimization " ; \
+              $(FORTRAN) -o $(package)_main.o $(F90FLAGSN) $(CPPFLAGS) \
+                $(package)_main.F90 )
+	$(RM) $(OBJ)/$(package)_main.F90 $(OBJ)/*.mod
+	@printf '[ OK ]\n'
+
+$(OBJ)/$(package)_test.o: ../$(package)/$(package)_test.F90
+	@printf ' %-9s %-15s\t\t' "Compiling" "$(package)_test"
+	$(CP) ../$(package)/$(package)_test.F90 $(OBJ)/$(package)_test.F90
+	cd $(OBJ); $(FORTRAN) -o $(package)_test.o $(F90FLAGS) $(CPPFLAGS) \
+             $(package)_test.F90 \
+              || ( printf ' %-26s' "=> Disabling optimization " ; \
+              $(FORTRAN) -o $(package)_test.o $(F90FLAGSN) $(CPPFLAGS) \
+                $(package)_test.F90 )
+	$(RM) $(OBJ)/$(package)_test.F90
+	$(RMOBFILE) $(package)_main.o
+	@printf '[ OK ]\n'
+

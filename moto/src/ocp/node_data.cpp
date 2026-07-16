@@ -1,0 +1,173 @@
+#include <moto/ocp/impl/custom_func.hpp>
+#include <moto/ocp/impl/node_data.hpp>
+#include <moto/ocp/problem.hpp>
+#include <moto/ocp/soft_constr.hpp>
+#include <moto/solver/data_base.hpp>
+
+namespace moto {
+sym_data::sym_data(ocp *prob) : prob_(prob) {
+    prob->wait_until_ready();
+    auto set_default_val = [this](const sym &s) {
+        if (s.default_value().size() > 0) {
+            auto v = this->prob_->extract(this->value_[s.field()], s);
+            if (s.default_value().size() != s.dim())
+                throw std::runtime_error(fmt::format("default value size mismatch for sym {} in field {}, expected {}, got {}",
+                                                     s.name(), field::name(s.field()), s.dim(), s.default_value().size()));
+            v = s.default_value();
+        }
+    };
+    for (size_t i = 0; i < field::num_sym; i++) {
+        value_[i].resize(prob_->dim(i));
+        value_[i].setZero();
+        for (const sym &s : prob_->exprs(static_cast<field_t>(i))) {
+            set_default_val(s);
+        }
+    }
+    for (const sym &s : prob_->exprs(__usr_var)) {
+        set_default_val(s);
+    }
+}
+
+void sym_data::integrate(field_t f, vector &dx, scalar_t alpha) {
+    assert(dx.size() == prob_->tdim(f) && "dx size mismatch");
+    for (const sym &s : prob_->exprs(f)) {
+        auto v = get(s);
+        s.integrate(v, prob_->extract_tangent(dx, s), v, alpha);
+    }
+}
+
+void sym_data::print() {
+    auto p = prob_;
+    for (auto f : concat_fields(primal_fields, std::array{__s, __p, __usr_var})) {
+        if (p->dim(f) == 0)
+            continue; // skip empty fields
+        fmt::println("Field {}: dim {}", field::name(f), p->dim(f));
+        for (const sym &s : p->exprs(f)) {
+            fmt::println("{}: dim {} value {}", s.name(), s.dim(), get(s).transpose());
+        }
+    }
+}
+vector_ref sym_data::get(const sym &s) {
+    if (s.field() == __usr_var)
+        return usr_value_.at(s.uid());
+    else
+        return prob_->extract(value_[s.field()], s);
+}
+
+node_data::node_data(const ocp_ptr_t &prob)
+    : prob_(prob),
+      sym_(new sym_data(prob.get())),
+      dense_(new lag_data(prob.get())),
+      shared_(new shared_data(prob.get(), sym_.get())) {
+    for (size_t field : func_fields) {
+        for (const generic_func &f : prob->exprs(field)) {
+            sparse_[f.field()].push_back(f.create_approx_data(*sym_, *dense_, *shared_));
+        }
+    }
+}
+void node_data::update_approximation(update_mode config, bool include_original_cost) {
+    /// @todo: always eval residual?
+    // call to precompute
+    const bool eval_value = config == update_mode::eval_val || config == update_mode::eval_all;
+    const bool eval_jacobian = config == update_mode::eval_jac ||
+                               config == update_mode::eval_derivatives ||
+                               config == update_mode::eval_all;
+    const bool eval_hessian = config == update_mode::eval_hess ||
+                              config == update_mode::eval_derivatives ||
+                              config == update_mode::eval_all;
+    const bool eval_derivatives = eval_jacobian || eval_hessian;
+    const bool reset_lag_jac = eval_derivatives && !include_original_cost;
+    if (eval_value) {
+        dense_->cost_ = 0.;
+        dense_->lag_ = 0.;
+    }
+    // set lagrangian gradient to zero
+    if (eval_derivatives) {
+        for (auto field : primal_fields) {
+            if (reset_lag_jac)
+                dense_->lag_jac_[field].setZero();
+            dense_->lag_jac_corr_[field].setZero();
+            dense_->cost_jac_[field].setZero();
+        }
+
+        if (eval_hessian) {
+            for (auto &hess_l_0 : dense_->lag_hess_) {
+                for (auto &hess_l_1 : hess_l_0) {
+                    hess_l_1.setZero();
+                }
+            }
+            for (auto &hess_l_0 : dense_->hessian_modification_) {
+                for (auto &hess_l_1 : hess_l_0) {
+                    hess_l_1.setZero();
+                }
+            }
+        }
+    }
+    for (const generic_custom_func &f : prob_->exprs(__pre_comp)) {
+        f.custom_call((*shared_)[f]); ///< @todo pass update mode
+    }
+    for_each<func_fields>([=, this](const generic_func &_f, func_approx_data &data) {
+        _f.compute_approx(data,
+                          eval_value && _f.order() >= approx_order::zero,
+                          eval_jacobian && _f.order() >= approx_order::first,
+                          eval_hessian && _f.order() >= approx_order::second);
+    });
+    for (const generic_custom_func &f : prob_->exprs(__post_comp)) {
+        f.custom_call((*shared_)[f]); ///< @todo pass update mode
+    }
+    if (eval_derivatives && include_original_cost)
+        for (auto field : primal_fields)
+            dense_->lag_jac_[field] = dense_->cost_jac_[field];
+
+    for (auto f : lag_data::stored_constr_fields) {
+        if (prob_->dim(f) == 0)
+            continue; // skip empty jacobian
+        if (eval_value)
+            dense_->lag_ += dense_->approx_[f].v_.dot(dense_->dual_[f]);
+        if (eval_jacobian)
+            for (auto p : primal_fields) {
+                if (dense_->approx_[f].jac_[p].is_empty())
+                    continue; // skip empty jacobian
+                dense_->approx_[f].jac_[p].right_T_times(dense_->dual_[f], dense_->lag_jac_[p]);
+            }
+    }
+    if (eval_value) {
+        inf_prim_res_ = 0.;
+        prim_res_l1_ = 0.;
+        for (auto field : constr_fields) {
+            size_t idx = 0;
+            for (const generic_constr &c : prob_->exprs(field)) {
+                const auto &cd = *sparse_[field][idx];
+                const auto summary = c.primal_residual_summary(cd);
+                inf_prim_res_ = std::max(inf_prim_res_, summary.inf);
+                prim_res_l1_ += summary.l1;
+                ++idx;
+            }
+        }
+        inf_comp_res_ = 0.;
+        for (const auto &comp : dense_->comp_) {
+            if (comp.size() == 0)
+                continue; // skip empty fields
+            inf_comp_res_ = std::max(comp.cwiseAbs().maxCoeff(), inf_comp_res_);
+        }
+        dense_->lag_ += dense_->cost_;
+    }
+}
+
+void node_data::print_residuals() const {
+    for (auto f : lag_data::stored_constr_fields) {
+        fmt::println("Field {}: dim {} residual {}", field::name(f), dense_->approx_[f].v_.size(),
+                     dense_->approx_[f].v_.transpose());
+    }
+}
+
+void node_data::bind_soft_runtime_owner(solver::data_base *owner) {
+    for (auto field : ineq_soft_constr_fields) {
+        for (auto &ptr : sparse_[field]) {
+            if (auto *sd = dynamic_cast<soft_constr::data_map_t *>(ptr.get())) {
+                sd->solver_data_ = owner;
+            }
+        }
+    }
+}
+} // namespace moto

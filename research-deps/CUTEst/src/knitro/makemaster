@@ -1,0 +1,38 @@
+#  Main body of the installation makefile for CUTEst KNITRO interface
+
+#  Nick Gould, for GALAHAD productions
+#  This version: 2023-12-04
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = KNITRO
+package = knitro
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  include compilation and run instructions
+
+include $(CUTEST)/src/makedefs/instructions
+
+#  select specific run test
+
+run_test:
+	echo " No $(PACKAGE) test program at the moment"
+
+#  include standard package compilation instructions
+
+include $(CUTEST)/src/makedefs/compile

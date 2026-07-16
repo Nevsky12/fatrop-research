@@ -1,0 +1,299 @@
+name: Meson
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  build:
+    name: ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.compiler }}-v${{ matrix.version }}/Mode-${{ matrix.mode }}/Int${{ matrix.int }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-15-intel]
+        compiler: ['gcc']
+        arch: ['x64']
+        version: ['13']
+        int: ['32', '64']
+        mode: ['static', 'shared']
+        include:
+          - os: windows-latest
+            compiler: intel
+            version: '2025.0'
+            int: '32'
+            mode: 'static'
+          - os: windows-latest
+            compiler: intel
+            version: '2025.0'
+            int: '64'
+            mode: 'static'
+          - os: ubuntu-latest
+            compiler: intel
+            version: '2025.0'
+            int: '32'
+            mode: 'static'
+          - os: ubuntu-latest
+            compiler: intel
+            version: '2025.0'
+            int: '32'
+            mode: 'shared'
+          - os: ubuntu-latest
+            compiler: intel
+            version: '2025.0'
+            int: '64'
+            mode: 'static'
+          - os: ubuntu-latest
+            compiler: intel
+            version: '2025.0'
+            int: '64'
+            mode: 'shared'
+          - os: macos-latest
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '32'
+            mode: 'static'
+          - os: macos-latest
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '64'
+            mode: 'static'
+          - os: macos-latest
+            compiler: gcc
+            version: '13'
+            arch: 'arm64'
+            int: '32'
+            mode: 'shared'
+          - os: macos-latest
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '64'
+            mode: 'shared'
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '32'
+            mode: 'static'
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '64'
+            mode: 'static'
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '32'
+            mode: 'shared'
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            version: '14'
+            arch: 'arm64'
+            int: '64'
+            mode: 'shared'
+          # - os: ubuntu-latest
+          #   compiler: nvidia-hpc
+          #   version: '25.1'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out CUTEST
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Meson and Ninja
+        shell: bash
+        run: |
+          pip install meson==1.4.1
+          pip install ninja
+
+      - name: Set the environment variables CUTEST
+        shell: bash
+        run: echo "CUTEST=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
+      - name: Install compilers
+        uses: fortran-lang/setup-fortran@main
+        with:
+          compiler: ${{ matrix.compiler }}
+          version: ${{ matrix.version }}
+
+      # Uncomment this section to obtain ssh access to VM
+      # - name: Setup tmate session
+      #   if: matrix.os == 'macos-13'
+      #   uses: mxschmitt/action-tmate@v3
+
+      - name: Setup CUTEST
+        shell: bash
+        run: |
+          INT64="false"
+          TESTS="true"
+          if [[ "${{matrix.int}}" == "64" ]]; then
+            INT64="true"
+            TESTS="false"
+          fi
+          if [[ "${{matrix.mode}}" == "static" ]]; then
+            MODE="static"
+          else
+            MODE="shared"
+            TESTS="false"
+          fi
+          QUADRUPLE="true"
+          if [[ "${{ matrix.compiler }}" == "intel" || "${{ matrix.os }}" == "ubuntu-24.04-arm" ]]; then
+            QUADRUPLE="false"
+          fi
+          SANITIZER="none"
+          if [[ "${{matrix.os}}" == "ubuntu-latest" && "${{ matrix.compiler }}" == "gcc" && "${{matrix.mode}}" == "static" ]]; then
+            SANITIZER="address,undefined"
+          fi
+          meson setup builddir --buildtype=debug \
+                               -Db_sanitize=${SANITIZER} \
+                               --prefix=$GITHUB_WORKSPACE/cutest \
+                               -Ddefault_library=${MODE} \
+                               -Dquadruple=${QUADRUPLE} \
+                               -Dint64=${INT64} \
+                               -Dtests=${TESTS}
+
+      - name: Build CUTEST
+        shell: bash
+        run: |
+          meson compile -C builddir
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ matrix.os }}_${{ matrix.compiler }}-v${{ matrix.version }}_Int${{ matrix.int }}_meson-log.txt
+          path: builddir/meson-logs/meson-log.txt
+
+      - name: Install CUTEST
+        shell: bash
+        run: |
+          meson install -C builddir
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ matrix.os }}_${{ matrix.compiler }}-v${{ matrix.version }}_Int${{ matrix.int }}_install-log.txt
+          path: builddir/meson-logs/install-log.txt
+
+      - name: Test CUTEST
+        if: matrix.int == '32'
+        shell: bash
+        run: |
+          if [[ "${{matrix.mode}}" == "static" ]]; then
+            meson test -C builddir
+          else
+            cd src/test
+            if [[ "${{ matrix.os }}" == "ubuntu-24.04-arm" ]]; then
+              LIBDIR="lib"
+              DLEXT="so"
+              SHARED="-shared"
+              export LD_LIBRARY_PATH="$(pwd):${GITHUB_WORKSPACE}/cutest/$LIBDIR:$LD_LIBRARY_PATH"
+            fi
+            if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+              LIBDIR="lib"
+              DLEXT="so"
+              SHARED="-shared"
+              export LD_LIBRARY_PATH="$(pwd):${GITHUB_WORKSPACE}/cutest/$LIBDIR:$LD_LIBRARY_PATH"
+            fi
+            if [[ "${{matrix.os}}" == "macos-15-intel" ]]; then
+              LIBDIR="lib"
+              DLEXT="dylib"
+              SHARED="-dynamiclib"
+              export DYLD_LIBRARY_PATH="$(pwd):${GITHUB_WORKSPACE}/cutest/$LIBDIR:$DYLD_LIBRARY_PATH"
+            fi
+            if [[ "${{matrix.os}}" == "macos-latest" ]]; then
+              LIBDIR="lib"
+              DLEXT="dylib"
+              SHARED="-dynamiclib"
+              export DYLD_LIBRARY_PATH="$(pwd):${GITHUB_WORKSPACE}/cutest/$LIBDIR:$DYLD_LIBRARY_PATH"
+            fi
+            if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+              LIBDIR="bin"
+              DLEXT="dll"
+              SHARED="-shared"
+              export PATH="$(pwd):${GITHUB_WORKSPACE}/cutest/$LIBDIR:$PATH"
+            fi
+            if [[ "${{ matrix.compiler }}" == "intel" ]]; then
+              PPF="-fpp"
+              PPC=""
+            else
+              PPF="-cpp"
+              PPC="-cpp"
+            fi
+            ${FC} ${SHARED} -fPIC c_elfun_single.f c_group_single.f c_range_single.f -o libc_single.${DLEXT}
+            ${FC} ${SHARED} -fPIC u_elfun_single.f u_group_single.f u_range_single.f -o libu_single.${DLEXT}
+            ${FC} ${SHARED} -fPIC q_elfun_single.f q_group_single.f q_range_single.f -o libq_single.${DLEXT}
+            ${FC} ${SHARED} -fPIC c_elfun_double.f c_group_double.f c_range_double.f -o libc_double.${DLEXT}
+            ${FC} ${SHARED} -fPIC u_elfun_double.f u_group_double.f u_range_double.f -o libu_double.${DLEXT}
+            ${FC} ${SHARED} -fPIC q_elfun_double.f q_group_double.f q_range_double.f -o libq_double.${DLEXT}
+            ${FC} ${SHARED} -fPIC c_elfun_quadruple.f c_group_quadruple.f c_range_quadruple.f -o libc_quadruple.${DLEXT}
+            ${FC} ${SHARED} -fPIC u_elfun_quadruple.f u_group_quadruple.f u_range_quadruple.f -o libu_quadruple.${DLEXT}
+            ${FC} ${SHARED} -fPIC q_elfun_quadruple.f q_group_quadruple.f q_range_quadruple.f -o libq_quadruple.${DLEXT}
+            ${FC} ${PPF} -DCUTEST_SHARED -DREAL_32 ctest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o ctest_single
+            ${FC} ${PPF} -DCUTEST_SHARED -DREAL_32 ctest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o ctest_threaded_single
+            ${FC} ${PPF} -DCUTEST_SHARED -DREAL_32 utest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o utest_single
+            ${FC} ${PPF} -DCUTEST_SHARED -DREAL_32 utest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o utest_threaded_single
+            ${FC} ${PPF} -DCUTEST_SHARED -DREAL_32 lqptest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o lqp_test_single
+            ${CC} ${PPC} -DCUTEST_SHARED -DREAL_32 ctest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o ctest_c_single
+            ${CC} ${PPC} -DCUTEST_SHARED -DREAL_32 utest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o utest_c_single
+            ${CC} ${PPC} -DCUTEST_SHARED -DREAL_32 ctest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o ctest2_c_single
+            ${CC} ${PPC} -DCUTEST_SHARED -DREAL_32 utest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_single -o utest2_c_single
+            ./ctest_single ./libc_single.${DLEXT}
+            ./ctest_threaded_single ./libc_single.${DLEXT}
+            ./utest_single ./libu_single.${DLEXT}
+            ./utest_threaded_single ./libu_single.${DLEXT}
+            ./lqp_test_single ./libq_single.${DLEXT}
+            ./ctest_c_single ./libc_single.${DLEXT}
+            ./utest_c_single ./libu_single.${DLEXT}
+            ./ctest2_c_single ./libc_single.${DLEXT}
+            ./utest2_c_single ./libu_single.${DLEXT}
+            ${FC} ${PPF} -DCUTEST_SHARED ctest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o ctest_double
+            ${FC} ${PPF} -DCUTEST_SHARED ctest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o ctest_threaded_double
+            ${FC} ${PPF} -DCUTEST_SHARED utest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o utest_double
+            ${FC} ${PPF} -DCUTEST_SHARED utest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o utest_threaded_double
+            ${FC} ${PPF} -DCUTEST_SHARED lqptest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o lqp_test_double
+            ${CC} ${PPC} -DCUTEST_SHARED ctest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o ctest_c_double
+            ${CC} ${PPC} -DCUTEST_SHARED utest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o utest_c_double
+            ${CC} ${PPC} -DCUTEST_SHARED ctest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o ctest2_c_double
+            ${CC} ${PPC} -DCUTEST_SHARED utest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_double -o utest2_c_double
+            ./ctest_double ./libc_double.${DLEXT}
+            ./ctest_threaded_double ./libc_double.${DLEXT}
+            ./utest_double ./libu_double.${DLEXT}
+            ./utest_threaded_double ./libu_double.${DLEXT}
+            ./lqp_test_double ./libq_double.${DLEXT}
+            ./ctest_c_double ./libc_double.${DLEXT}
+            ./utest_c_double ./libu_double.${DLEXT}
+            ./ctest2_c_double ./libc_double.${DLEXT}
+            ./utest2_c_double ./libu_double.${DLEXT}
+            if [[ "${{ matrix.compiler }}" != "intel" && "${{ matrix.os }}" != "ubuntu-24.04-arm" ]]; then
+              ${FC} ${PPF} -DCUTEST_SHARED -DREAL_128 ctest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o ctest_quadruple
+              ${FC} ${PPF} -DCUTEST_SHARED -DREAL_128 ctest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o ctest_threaded_quadruple
+              ${FC} ${PPF} -DCUTEST_SHARED -DREAL_128 utest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o utest_quadruple
+              ${FC} ${PPF} -DCUTEST_SHARED -DREAL_128 utest_threaded.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o utest_threaded_quadruple
+              ${FC} ${PPF} -DCUTEST_SHARED -DREAL_128 lqptest.F90 -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o lqp_test_quadruple
+              ${CC} ${PPC} -DCUTEST_SHARED -DREAL_128 ctest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o ctest_c_quadruple
+              ${CC} ${PPC} -DCUTEST_SHARED -DREAL_128 utest.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o utest_c_quadruple
+              ${CC} ${PPC} -DCUTEST_SHARED -DREAL_128 ctest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o ctest2_c_quadruple
+              ${CC} ${PPC} -DCUTEST_SHARED -DREAL_128 utest_c.c -I${GITHUB_WORKSPACE}/cutest/include -I${GITHUB_WORKSPACE}/cutest/modules -L${GITHUB_WORKSPACE}/cutest/${LIBDIR} -lcutest_quadruple -o utest2_c_quadruple
+              ./ctest_quadruple ./libc_quadruple.${DLEXT}
+              ./ctest_threaded_quadruple ./libc_quadruple.${DLEXT}
+              ./utest_quadruple ./libu_quadruple.${DLEXT}
+              ./utest_threaded_quadruple ./libu_quadruple.${DLEXT}
+              ./lqp_test_quadruple ./libq_quadruple.${DLEXT}
+              ./ctest_c_quadruple ./libc_quadruple.${DLEXT}
+              ./utest_c_quadruple ./libu_quadruple.${DLEXT}
+              ./ctest2_c_quadruple ./libc_quadruple.${DLEXT}
+              ./utest2_c_quadruple ./libu_quadruple.${DLEXT}
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ matrix.os }}_${{ matrix.compiler }}-v${{ matrix.version }}_Int${{ matrix.int }}_testlog.txt
+          path: builddir/meson-logs/testlog.txt

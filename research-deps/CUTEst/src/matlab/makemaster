@@ -1,0 +1,75 @@
+#  Main body of the installation makefile for CUTEst Matlab programs
+
+#  N. Gould, D. Orban and Ph. L. Toint.
+#  This version: 2023-12-04
+
+#  include standard CUTEst makefile defaults before package-specifics
+
+include $(CUTEST)/src/makedefs/defaults
+
+#  ===========================================================================
+#  ====================  package-dependent parts  ============================
+#  ===========================================================================
+
+#  package name 
+
+PACKAGE = MATLAB_CUTEST
+package = matlab
+
+#  ===========================================================================
+#  =================  end of package-dependent parts  ========================
+#  ===========================================================================
+
+#  Mex compiler
+
+MEX = $(MYMATLAB)/bin/mex
+
+#  compiler flags
+
+MATLABINC = -I$(MATLAB)/extern/include
+MFFLAGS   = $(MBASIC) $(OPTIMIZATION) $(DEBUG) $(MODULES)
+MFLAGS    = CC='$(CC)' FC='$(FORTRAN)' GCC='$(CC)' \
+            FFLAGS='$(MFFLAGS) $(OPENMP)' \
+            LD='$(FORTRAN) $(MFFLAGS) $(OPENMP)' \
+            -g -largeArrayDims $(MATLABINC)
+
+#  include standard CUTEst makefile definitions
+
+include $(CUTEST)/src/makedefs/definitions
+
+#  main compilations and runs
+
+all: $(package)
+
+#  basic packages
+
+$(package): $(package)_$(PRECIS)
+$(package)_single: 
+	@printf ' %-21s\n' "$(package) is not available in single precision"
+$(package)_double: $(OBJD)/mcutest.o
+	@printf ' %-21s\n' "CUTEst: $(package) ($(PRECIS) $(SUCC)"
+
+#  compile tools
+
+tools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+utools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_unconstrained PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+ctools:
+	( cd ../tools ; $(MAKE) -f $(CUTEST)/makefiles/$(VERSION) \
+                     cutest_constrained PRECIS=$(PRECIS) PWD=$(PWD)/../tools )
+
+#  individual compilations
+
+#  mcutest
+
+mcutest.o: $(OBJ)/mcutest.o
+
+$(OBJ)/mcutest.o: mcutest.c
+	@printf ' %-9s %-15s\t\t' "Compiling" "mcutest"
+	$(CP) mcutest.c $(OBJ)/mcutest.c
+	cd $(OBJ) ; $(MEX) -c $(MFLAGS) -I$(CUTEST)/include mcutest.c
+	$(RM) $(OBJ)/mcutest.c
+	@printf '[ OK ]\n'
