@@ -45,7 +45,7 @@ namespace fatrop
     {
         fatrop_dbg_assert(kmax <= size_);
         fatrop_dbg_assert(ai >= 0);
-        for (Index i = 0; i < kmax; i++)
+        for (Index i = kmax; i-- > 0;)
         {
             ROWSW(mat->n, mat, ai + permutation_vector_[i], 0, mat, ai + i, 0);
         }
@@ -105,7 +105,7 @@ namespace fatrop
     {
         fatrop_dbg_assert(kmax <= size_);
         fatrop_dbg_assert(aj >= 0);
-        for (Index i = 0; i < kmax; i++)
+        for (Index i = kmax; i-- > 0;)
         {
             COLSW(mat->m, mat, 0, aj + permutation_vector_[i], mat, 0, aj + i);
         }

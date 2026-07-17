@@ -6,6 +6,35 @@ add_executable(global_parameter_kkt_benchmark
   global_parameter_kkt_benchmark.cpp
 )
 
+add_executable(parametric_riccati_reference
+  parametric_riccati_reference.cpp
+)
+
+add_executable(heterogeneous_phase_kkt_benchmark
+  heterogeneous_phase_kkt_benchmark.cpp
+)
+
+add_executable(interval_scoped_kkt_benchmark
+  interval_scoped_kkt_benchmark.cpp
+)
+
+add_executable(interval_scoped_ocp_benchmark
+  interval_scoped_ocp_benchmark.cpp
+)
+
+add_executable(rank_deficient_implicit_kkt_benchmark
+  rank_deficient_implicit_kkt_benchmark.cpp
+)
+
+add_executable(nonlinear_global_parameter_sqp_benchmark
+  nonlinear_global_parameter_sqp_benchmark.cpp
+)
+
+add_executable(nonlinear_interval_scoped_sqp_benchmark
+  nonlinear_interval_scoped_sqp_benchmark.cpp
+  interval_scoped_collocation_problem.cpp
+)
+
 add_executable(dtoc_fatrop_benchmark
   dtoc_fatrop_benchmark.cpp
 )
@@ -15,6 +44,91 @@ target_link_libraries(global_parameter_kkt_benchmark
     fatrop
     Eigen3::Eigen
     PkgConfig::IPOPT
+)
+
+target_link_libraries(parametric_riccati_reference
+  PRIVATE
+    Eigen3::Eigen
+)
+
+target_link_libraries(heterogeneous_phase_kkt_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+)
+
+target_link_libraries(interval_scoped_kkt_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+)
+
+target_link_libraries(interval_scoped_ocp_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+)
+
+target_link_libraries(rank_deficient_implicit_kkt_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+)
+
+target_link_libraries(nonlinear_global_parameter_sqp_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+    PkgConfig::IPOPT
+)
+
+target_link_libraries(nonlinear_interval_scoped_sqp_benchmark
+  PRIVATE
+    fatrop
+    Eigen3::Eigen
+    PkgConfig::IPOPT
+)
+
+add_test(
+  NAME nonlinear_interval_scoped_collocation_regression
+  COMMAND nonlinear_interval_scoped_sqp_benchmark
+    --phase-nodes 4,5,4,5
+    --phase-nx 2,3,2,4
+    --phase-nu 1,1,2,1
+    --phase-parameters 1
+    --interface-parameters 1
+    --segment-parameters 1
+    --segment-width 2
+    --segment-stride 1
+    --global-parameters 1
+    --collocation-degree 3
+    --repeats 1
+)
+set_tests_properties(
+  nonlinear_interval_scoped_collocation_regression
+  PROPERTIES TIMEOUT 30
+)
+
+add_test(
+  NAME nonlinear_interval_scoped_ipm_regression
+  COMMAND nonlinear_interval_scoped_sqp_benchmark
+    --phase-nodes 4,5,4,5
+    --phase-nx 2,3,2,4
+    --phase-nu 1,1,2,1
+    --phase-parameters 1
+    --interface-parameters 1
+    --segment-parameters 1
+    --segment-width 2
+    --segment-stride 1
+    --global-parameters 1
+    --path-inequalities 2
+    --collocation-degree 3
+    --max-iterations 100
+    --repeats 1
+)
+set_tests_properties(
+  nonlinear_interval_scoped_ipm_regression
+  PROPERTIES TIMEOUT 30
 )
 
 target_link_libraries(dtoc_fatrop_benchmark PRIVATE fatrop)

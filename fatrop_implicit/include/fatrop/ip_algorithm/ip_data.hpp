@@ -142,6 +142,38 @@ namespace fatrop
 
         IpTimingStatistics &timing_statistics() { return timings_; }
 
+        /**
+         * @brief Store a complete primal-dual starting point for the next solve.
+         *
+         * The data is copied, so the input views may refer to the current solution.  The warm
+         * start remains active for subsequent calls to IpAlgorithm::optimize() until it is
+         * replaced or cleared.
+         */
+        void set_warm_start(const VecRealView &primal_x, const VecRealView &primal_s,
+                            const VecRealView &dual_eq,
+                            const VecRealView &dual_bounds_l,
+                            const VecRealView &dual_bounds_u, Scalar mu);
+
+        /// Store the current iterate as the starting point for the next solve.
+        void set_warm_start_from_current_iterate();
+
+        /// Disable a previously stored warm start.
+        void clear_warm_start() { warm_start_available_ = false; }
+
+        bool has_warm_start() const { return warm_start_available_; }
+        const VecRealView &warm_start_primal_x() const { return warm_start_primal_x_; }
+        const VecRealView &warm_start_primal_s() const { return warm_start_primal_s_; }
+        const VecRealView &warm_start_dual_eq() const { return warm_start_dual_eq_; }
+        const VecRealView &warm_start_dual_bounds_l() const
+        {
+            return warm_start_dual_bounds_l_;
+        }
+        const VecRealView &warm_start_dual_bounds_u() const
+        {
+            return warm_start_dual_bounds_u_;
+        }
+        Scalar warm_start_mu() const { return warm_start_mu_; }
+
     private:
         NlpSp nlp_; ///< Shared pointer to the NLP problem.
         InfoType info_;
@@ -153,6 +185,13 @@ namespace fatrop
         bool tiny_step_flag_ = false;
         Scalar tol_ = 1e-8;
         IpTimingStatistics timings_;
+        bool warm_start_available_ = false;
+        VecRealAllocated warm_start_primal_x_;
+        VecRealAllocated warm_start_primal_s_;
+        VecRealAllocated warm_start_dual_eq_;
+        VecRealAllocated warm_start_dual_bounds_l_;
+        VecRealAllocated warm_start_dual_bounds_u_;
+        Scalar warm_start_mu_ = 0.1;
         /** todo make this unique pointer to allow incomplete types? */
         Hessian<ProblemType> hessian_data_[3];
         Jacobian<ProblemType> jacobian_data_[3];

@@ -8,10 +8,20 @@
 #include "fatrop/ocp/problem_info.hpp"
 
 #include <chrono>
+#include <algorithm>
+#include <numeric>
 
 using namespace fatrop;
 
 Jacobian<OcpType>::Jacobian(const ProblemDims &dims)
+    : global_parameter_jacobian(
+          std::accumulate(dims.number_of_states.begin() + 1,
+                          dims.number_of_states.end(), 0)
+        + std::accumulate(dims.number_of_eq_constraints.begin(),
+                          dims.number_of_eq_constraints.end(), 0)
+        + std::accumulate(dims.number_of_ineq_constraints.begin(),
+                          dims.number_of_ineq_constraints.end(), 0),
+          std::max<Index>(dims.number_of_global_parameters, 1))
 {
     // reserve memory for the Jacobian matrices
     BAbt.reserve(dims.K - 1);
@@ -72,6 +82,11 @@ void Jacobian<OcpType>::apply_on_right(const OcpInfo &info, const VecRealView &x
         gemv_t(nu + nx, ng_ineq, 1.0, Gg_ineqt[k], 0, 0, x, offset_ux, 1.0, out, offset_g_ineq, out,
                offset_g_ineq);
     }
+    if (info.number_of_global_parameters > 0)
+        gemv_n(info.number_of_eq_constraints,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_jacobian, 0, 0, x,
+               info.offset_primal_global, 1.0, out, 0, out, 0);
 };
 void Jacobian<OcpType>::transpose_apply_on_right(const OcpInfo &info, const VecRealView &mult_eq,
                                                  Scalar alpha, const VecRealView &y,
@@ -118,6 +133,12 @@ void Jacobian<OcpType>::transpose_apply_on_right(const OcpInfo &info, const VecR
         gemv_n(nu + nx, ng_ineq, 1.0, Gg_ineqt[k], 0, 0, mult_eq, offset_g_ineq, 1.0, out,
                offset_ux, out, offset_ux);
     }
+    if (info.number_of_global_parameters > 0)
+        gemv_t(info.number_of_eq_constraints,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_jacobian, 0, 0, mult_eq, 0,
+               1.0, out, info.offset_primal_global,
+               out, info.offset_primal_global);
 }
 void Jacobian<OcpType>::get_rhs(const OcpInfo &info, VecRealView &rhs) const
 {
@@ -405,6 +426,11 @@ void Jacobian<ImplicitOcpType>::apply_on_right(const OcpInfo& info, const VecRea
         gemv_t(nu + nx, ng_ineq, 1.0, Gg_ineqt[k], 0, 0, x, offset_ux, 1.0, out, offset_g_ineq, out,
                offset_g_ineq);
     }
+    if (info.number_of_global_parameters > 0)
+        gemv_n(info.number_of_eq_constraints,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_jacobian, 0, 0, x,
+               info.offset_primal_global, 1.0, out, 0, out, 0);
     if (print_debug){ std::cout << "Jacobian<ImplicitOcpType>::apply_on_right done" << std::endl;}
 };
 
@@ -467,5 +493,11 @@ void Jacobian<ImplicitOcpType>::transpose_apply_on_right(const OcpInfo &info, co
         gemv_n(nu + nx, ng_ineq, 1.0, Gg_ineqt[k], 0, 0, mult_eq, offset_g_ineq, 1.0, out,
                offset_ux, out, offset_ux);
     }
+    if (info.number_of_global_parameters > 0)
+        gemv_t(info.number_of_eq_constraints,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_jacobian, 0, 0, mult_eq, 0,
+               1.0, out, info.offset_primal_global,
+               out, info.offset_primal_global);
     if (print_debug){ std::cout << "Jacobian<ImplicitOcpType>::transpose_apply_on_right done" << std::endl;}
 }

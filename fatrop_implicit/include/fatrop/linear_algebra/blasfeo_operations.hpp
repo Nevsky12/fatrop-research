@@ -215,6 +215,38 @@ namespace fatrop
                                 &D.mat(), D.ai() + di, D.aj() + dj);
     }
 
+    static inline void trsm_llnn(int m, int n, Scalar alpha, const MatRealView &A, int ai, int aj,
+                                 const MatRealView &B, int bi, int bj, MatRealView &D, int di,
+                                 int dj)
+    {
+        blasfeo_trsm_llnn_wrap(m, n, alpha, &A.mat(), A.ai() + ai, A.aj() + aj, &B.mat(),
+                               B.ai() + bi, B.aj() + bj, &D.mat(), D.ai() + di, D.aj() + dj);
+    }
+
+    static inline void trsm_lltn(int m, int n, Scalar alpha, const MatRealView &A, int ai, int aj,
+                                 const MatRealView &B, int bi, int bj, MatRealView &D, int di,
+                                 int dj)
+    {
+        blasfeo_trsm_lltn_wrap(m, n, alpha, &A.mat(), A.ai() + ai, A.aj() + aj, &B.mat(),
+                               B.ai() + bi, B.aj() + bj, &D.mat(), D.ai() + di, D.aj() + dj);
+    }
+
+    static inline void trsm_lunu(int m, int n, Scalar alpha, const MatRealView &A, int ai, int aj,
+                                 const MatRealView &B, int bi, int bj, MatRealView &D, int di,
+                                 int dj)
+    {
+        blasfeo_trsm_lunu_wrap(m, n, alpha, &A.mat(), A.ai() + ai, A.aj() + aj, &B.mat(),
+                               B.ai() + bi, B.aj() + bj, &D.mat(), D.ai() + di, D.aj() + dj);
+    }
+
+    static inline void trsm_lutu(int m, int n, Scalar alpha, const MatRealView &A, int ai, int aj,
+                                 const MatRealView &B, int bi, int bj, MatRealView &D, int di,
+                                 int dj)
+    {
+        blasfeo_trsm_lutu_wrap(m, n, alpha, &A.mat(), A.ai() + ai, A.aj() + aj, &B.mat(),
+                               B.ai() + bi, B.aj() + bj, &D.mat(), D.ai() + di, D.aj() + dj);
+    }
+
     static inline void syrk_ln(int m, int k, Scalar alpha, const MatRealView &A, int ai, int aj,
                                const MatRealView &B, int bi, int bj, Scalar beta,
                                const MatRealView &C, int ci, int cj, MatRealView &D, int di, int dj)

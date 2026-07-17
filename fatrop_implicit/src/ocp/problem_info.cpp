@@ -26,10 +26,15 @@ ProblemInfo::ProblemInfo(const ProblemDims &dims)
       offsets_g_eq_path(dims.K), offsets_g_eq_slack(dims.K)
 {
     using namespace internal;
-    // compute the number of primal variables
-    number_of_primal_variables =
+    // Stage variables retain their original chain ordering. The one-copy
+    // global vector is appended as a dense KKT border.
+    number_of_trajectory_variables =
         std::accumulate(dims.number_of_states.begin(), dims.number_of_states.end(), 0) +
         std::accumulate(dims.number_of_controls.begin(), dims.number_of_controls.end(), 0);
+    number_of_global_parameters = dims.number_of_global_parameters;
+    offset_primal_global = number_of_trajectory_variables;
+    number_of_primal_variables =
+        number_of_trajectory_variables + number_of_global_parameters;
     // compute the number of slack variables
     number_of_slack_variables = std::accumulate(dims.number_of_ineq_constraints.begin(),
                                                 dims.number_of_ineq_constraints.end(), 0);

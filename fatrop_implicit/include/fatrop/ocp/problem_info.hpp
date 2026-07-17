@@ -29,7 +29,13 @@ namespace fatrop
         /// The dimensions of the OCP
         const ProblemDims dims;
 
-        // Number of primal variables
+        // Number of stage-local trajectory variables.
+        Index number_of_trajectory_variables;
+
+        // Number of one-copy global parameters.
+        Index number_of_global_parameters;
+
+        // Number of all primal variables (trajectory plus global parameters).
         Index number_of_primal_variables;
 
         // Number of slack variables
@@ -48,6 +54,9 @@ namespace fatrop
          */
         std::vector<Index> offsets_primal_u;
         std::vector<Index> offsets_primal_x;
+
+        /// Global parameters are appended after the complete trajectory.
+        Index offset_primal_global;
 
         /// Offset for the slack variables in the overall variable vector (combined x and s vector)
         Index offset_slack;

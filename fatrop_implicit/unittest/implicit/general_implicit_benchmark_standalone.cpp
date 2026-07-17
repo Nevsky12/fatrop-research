@@ -7,7 +7,6 @@
 #include "fatrop/ocp/jacobian.hpp"
 #include "fatrop/ocp/problem_info.hpp" //inherit
 #include "fatrop/ocp/type.hpp"
-#include <gtest/gtest.h>
 #include <vector>
 #include <iostream>
 #include <fstream>
@@ -16,6 +15,8 @@
 #include <random>
 #include <fstream>
 #include <algorithm>
+#include <array>
+#include <optional>
 
 static const bool USE_GENERALIZATION = true;
 

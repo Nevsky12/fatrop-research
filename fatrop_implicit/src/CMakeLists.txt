@@ -6,6 +6,7 @@ set(FATROP_SOURCES
     ocp/dims.cpp
     ocp/jacobian.cpp
     ocp/hessian.cpp
+    ocp/interval_scoped_kkt_solver.cpp
     ocp/ip_alg_builder.cpp
     ocp/ip_algorithm.cpp
     ocp/ip_convergence_check.cpp
@@ -23,6 +24,7 @@ set(FATROP_SOURCES
     ocp/ip_resto_phase_min_cl1.cpp
     ocp/ip_search_dir.cpp
     ocp/nlp_ocp.cpp
+    ocp/parametric_implicit_nlp_ocp.cpp
     ocp/pd_system_orig.cpp
     ocp/pd_system_resto.cpp
     ocp/pd_solver_orig.cpp
@@ -47,7 +49,7 @@ target_link_libraries(fatrop PUBLIC blasfeo)
 # Specify include directories for the target
 target_include_directories(fatrop
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
@@ -57,7 +59,7 @@ set(INSTALL_TARGETS fatrop)
 
 # Export the target
 install(TARGETS ${INSTALL_TARGETS}
-    EXPORT fatropConfig
+    EXPORT fatropTargets
     LIBRARY DESTINATION ${LIBRARY_INSTALL_DIR}
     ARCHIVE DESTINATION ${ARCHIVE_INSTALL_DIR}
     RUNTIME DESTINATION ${RUNTIME_INSTALL_DIR}
@@ -65,11 +67,28 @@ install(TARGETS ${INSTALL_TARGETS}
 )
 
 # Install header files (only .hpp)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/fatrop
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/fatrop
         DESTINATION ${INCLUDE_INSTALL_DIR}
         FILES_MATCHING PATTERN "*.hpp")
 
-# Install the export
-install(EXPORT fatropConfig
+# Install a relocatable package.  The target's public interface contains
+# BLASFEO, so consumers must import that target before the FATROP targets file.
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    ${PROJECT_SOURCE_DIR}/cmake/fatropConfig.cmake.in
+    ${PROJECT_BINARY_DIR}/fatropConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_DIR}
+)
+write_basic_package_version_file(
+    ${PROJECT_BINARY_DIR}/fatropConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(EXPORT fatropTargets
+        FILE fatropTargets.cmake
         NAMESPACE fatrop::
+        DESTINATION ${CMAKE_INSTALL_DIR})
+install(FILES
+        ${PROJECT_BINARY_DIR}/fatropConfig.cmake
+        ${PROJECT_BINARY_DIR}/fatropConfigVersion.cmake
         DESTINATION ${CMAKE_INSTALL_DIR})

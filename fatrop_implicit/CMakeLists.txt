@@ -44,7 +44,7 @@ endif()
 
 
 # Add include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${PROJECT_SOURCE_DIR}/include)
 
 # Add the fatrop source directory
 add_subdirectory(src)
@@ -59,11 +59,14 @@ if(BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
+# The research tree has small executable-level regressions of its own, so
+# generate the CTest manifest whenever either test family is requested.
+if(BUILD_TESTS OR BUILD_RESEARCH_BENCHMARKS)
+  enable_testing()
+endif()
+
 # Build tests if the option is enabled
 if(BUILD_TESTS)
-  # Enable testing
-  enable_testing()
-
   # Add the unittest directory, but exclude it from installation
   add_subdirectory(unittest)
 endif()

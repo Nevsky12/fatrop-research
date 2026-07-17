@@ -53,5 +53,48 @@ TEST_F(ProblemInfoTest, ConstructorAndOffsets)
             EXPECT_EQ(problem_info.offsets_g_eq_slack, std::vector<Index>({17, 23, 30}));
         }
 
+TEST_F(ProblemInfoTest, AppendsOneCopyGlobalParametersAfterTrajectory)
+{
+    ProblemDims dims(
+        3,
+        std::vector<Index>{2, 3, 4},
+        std::vector<Index>{4, 5, 6},
+        std::vector<Index>{1, 2, 3},
+        std::vector<Index>{6, 7, 8},
+        5);
+    ProblemInfo const info(dims);
+
+    EXPECT_EQ(info.number_of_trajectory_variables, 24);
+    EXPECT_EQ(info.number_of_global_parameters, 5);
+    EXPECT_EQ(info.offset_primal_global, 24);
+    EXPECT_EQ(info.number_of_primal_variables, 29);
+    EXPECT_EQ(info.offset_slack, 29);
+    EXPECT_EQ(info.pd_orig_offset_slack, 29);
+    EXPECT_EQ(info.pd_resto_offset_slack, 29);
+    EXPECT_EQ(info.offsets_primal_u, std::vector<Index>({0, 6, 14}));
+    EXPECT_EQ(info.offsets_primal_x, std::vector<Index>({2, 9, 18}));
+}
+
+TEST_F(ProblemInfoTest, StageBorderDimensionDoesNotAllocatePrimalCopies)
+{
+    ProblemDims dims(
+        2,
+        std::vector<Index>{0, 0},
+        std::vector<Index>{1, 1},
+        std::vector<Index>{3, 0},
+        std::vector<Index>{0, 0},
+        0,
+        std::vector<Index>{2, 0});
+    ProblemInfo const info(dims);
+
+    EXPECT_EQ(
+        info.dims.number_of_stage_border_variables,
+        std::vector<Index>({2, 0}));
+    EXPECT_EQ(info.number_of_trajectory_variables, 2);
+    EXPECT_EQ(info.number_of_global_parameters, 0);
+    EXPECT_EQ(info.number_of_primal_variables, 2);
+    EXPECT_EQ(info.number_of_g_eq_path, 3);
+}
+
     } // namespace test
 } // namespace fatrop

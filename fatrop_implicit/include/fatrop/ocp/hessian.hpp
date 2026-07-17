@@ -67,6 +67,12 @@ namespace fatrop
          *   RSQrqt[-1, :] is reserved for the right-hand side.
          */
         std::vector<MatRealAllocated> RSQrqt;
+        /// H_xp with trajectory variables in rows and global parameters in columns.
+        MatRealAllocated global_parameter_cross_hessian;
+        /// H_pp for the one-copy global parameter vector.
+        MatRealAllocated global_parameter_hessian;
+        /// Parameter part of the embedded Hessian right-hand side.
+        VecRealAllocated global_parameter_rhs;
         void apply_on_right(const OcpInfo& info, const VecRealView& x, Scalar alpha, const VecRealView& y, VecRealView& out) const;
         void get_rhs(const OcpInfo& info, VecRealView& out) const;
         void set_rhs(const OcpInfo& info, const VecRealView& in);

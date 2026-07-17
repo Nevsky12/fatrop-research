@@ -49,7 +49,11 @@ namespace fatrop
 #define TRSM_RUNN blasfeo_dtrsm_runn
 #define TRSM_RLNU blasfeo_dtrsm_rlnu
 #define TRSM_RUNU blasfeo_dtrsm_runu
+#define TRSM_LLNN blasfeo_dtrsm_llnn
 #define TRSM_LLNU blasfeo_dtrsm_llnu
+#define TRSM_LLTN blasfeo_dtrsm_lltn
+#define TRSM_LUNU blasfeo_dtrsm_lunu
+#define TRSM_LUTU blasfeo_dtrsm_lutu
 #define GEMM_NT blasfeo_dgemm_nt
 #define GEMM_NN blasfeo_dgemm_nn
 #define GEMM_TN blasfeo_dgemm_tn

@@ -194,6 +194,71 @@ TEST_F(PdTest, TestSolve)
     EXPECT_NEAR(norm_inf(tmp), 0, 1e-6);
 }
 
+TEST(PdRestoGlobalParameters, NativeBorderIsPreservedByRestorationReduction)
+{
+    const ProblemDims dims(
+        1, std::vector<Index>{0}, std::vector<Index>{1},
+        std::vector<Index>{1}, std::vector<Index>{0}, 1);
+    const ProblemInfo info(dims);
+    Jacobian<OcpType> jacobian(dims);
+    Hessian<OcpType> hessian(dims);
+    jacobian.Gg_eqt[0] = 0.0;
+    jacobian.Gg_eqt[0](0, 0) = 1.0;
+    jacobian.global_parameter_jacobian = 0.0;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_path[0], 0) = 0.5;
+    hessian.set_zero();
+    hessian.RSQrqt[0](0, 0) = 2.0;
+    hessian.global_parameter_cross_hessian(0, 0) = 0.1;
+    hessian.global_parameter_hessian(0, 0) = 3.0;
+
+    VecRealAllocated diagonal(
+        info.number_of_primal_variables + info.number_of_slack_variables_resto);
+    VecRealAllocated equality_diagonal(info.number_of_eq_constraints);
+    VecRealAllocated rhs_primal(info.number_of_primal_variables);
+    VecRealAllocated rhs_slack(info.number_of_slack_variables_resto);
+    VecRealAllocated rhs_constraints(info.number_of_eq_constraints);
+    VecRealAllocated rhs_lower(info.number_of_slack_variables_resto);
+    VecRealAllocated rhs_upper(info.number_of_slack_variables_resto);
+    VecRealAllocated lower_distance(info.number_of_slack_variables_resto);
+    VecRealAllocated upper_distance(info.number_of_slack_variables_resto);
+    VecRealAllocated lower_dual(info.number_of_slack_variables_resto);
+    VecRealAllocated upper_dual(info.number_of_slack_variables_resto);
+
+    diagonal = 0.2;
+    equality_diagonal = 0.05;
+    rhs_primal(0) = 0.3;
+    rhs_primal(1) = -0.2;
+    rhs_constraints(0) = 0.4;
+    rhs_slack(0) = -0.1;
+    rhs_slack(1) = 0.15;
+    rhs_lower(0) = 0.07;
+    rhs_lower(1) = -0.04;
+    rhs_upper = 0.0;
+    lower_distance = 1.0;
+    upper_distance = 1.0;
+    lower_dual = 1.0;
+    upper_dual = 0.0;
+
+    auto augmented_solver = std::make_shared<AugSystemSolver<OcpType>>(info);
+    auto original_solver =
+        std::make_shared<PdSolverOrig<OcpType>>(info, augmented_solver);
+    PdSolverResto<OcpType> restoration_solver(info, original_solver);
+    LinearSystem<PdSystemResto<OcpType>> system(
+        info, jacobian, hessian, diagonal, false, equality_diagonal,
+        lower_distance, upper_distance, lower_dual, upper_dual,
+        rhs_primal, rhs_slack, rhs_constraints, rhs_lower, rhs_upper);
+
+    VecRealAllocated rhs(system.m());
+    VecRealAllocated solution(system.m());
+    VecRealAllocated residual(system.m());
+    system.get_rhs(rhs);
+    ASSERT_EQ(
+        restoration_solver.solve_once(system, solution),
+        LinsolReturnFlag::SUCCESS);
+    system.apply_on_right(solution, 1.0, rhs, residual);
+    EXPECT_LT(norm_inf(residual), 1e-10);
+}
+
 // TEST_F(PdTest, TestSolveDegen)
 // {
 //     LinearSystem<PdSystemType<OcpType>> ls(info, jacobian, hessian, D_x, true, D_eq, sl, su, zl,

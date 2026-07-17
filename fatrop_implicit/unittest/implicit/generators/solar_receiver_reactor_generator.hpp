@@ -7,7 +7,7 @@
 #include "../test_problem/implicit_test_problem.hpp"    
 #include "../test_problem/explicit_test_problem.hpp"
 #include "ocp_interface_generator.hpp"
-#include <json/include/nlohmann/json.hpp>
+#include <nlohmann/json.hpp>
 
 #include <casadi/casadi.hpp>
 

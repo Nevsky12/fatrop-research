@@ -87,7 +87,31 @@ namespace fatrop
         const ProblemInfo &info() const;
 
         const VecRealView &solution_primal() const;
+        const VecRealView &solution_slack() const;
         const VecRealView &solution_dual() const;
+        const VecRealView &solution_dual_bounds_lower() const;
+        const VecRealView &solution_dual_bounds_upper() const;
+        Scalar barrier_parameter() const;
+        Index iteration_count() const;
+
+        /**
+         * @brief Use a complete primal-dual starting point on subsequent solves.
+         *
+         * All vectors are copied immediately.  The primal vector includes the one-copy global
+         * parameter block described by info().offset_primal_global.
+         */
+        void set_warm_start(const VecRealView &primal_x, const VecRealView &primal_s,
+                            const VecRealView &dual_eq,
+                            const VecRealView &dual_bounds_l,
+                            const VecRealView &dual_bounds_u, Scalar mu);
+
+        /// Reuse the current solution as the next complete primal-dual starting point.
+        void set_warm_start_from_solution();
+
+        /// Return to the NLP-provided cold primal initialization.
+        void clear_warm_start();
+
+        bool has_warm_start() const;
 
     private:
         IpSearchDirSp search_dir_;                  ///< Search direction calculator

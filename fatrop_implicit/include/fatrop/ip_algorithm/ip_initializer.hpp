@@ -60,16 +60,38 @@ namespace fatrop
          */
         void initialize_slacks();
 
+        /// Initialize all primal-dual quantities from IpData's owned warm-start snapshot.
+        void initialize_warm_start();
+
+        /// Project a supplied slack vector strictly inside the relaxed bounds.
+        void project_slacks(const VecRealView &input, Scalar push, Scalar fraction);
+
         IpDataSp ipdata_;                      ///< Interior point algorithm data
         IpEqMultInitializerSp eq_mult_initializer_; ///< Equality multiplier initializer
         Scalar bound_push = 1e-2;              ///< Bound push parameter (kappa_1)
         Scalar bound_frac = 1e-2;              ///< Bound fraction parameter (kappa_2)
+        Scalar warm_start_bound_push_ = 1e-8;
+        Scalar warm_start_bound_frac_ = 1e-8;
+        Scalar warm_start_mult_bound_push_ = 1e-8;
         VecRealAllocated primal_buff_;
+        VecRealAllocated slack_buff_;
 
     public:
         // Setter methods for options
         void set_bound_push(const Scalar& value) { bound_push = value; }
         void set_bound_frac(const Scalar& value) { bound_frac = value; }
+        void set_warm_start_bound_push(const Scalar &value)
+        {
+            warm_start_bound_push_ = value;
+        }
+        void set_warm_start_bound_frac(const Scalar &value)
+        {
+            warm_start_bound_frac_ = value;
+        }
+        void set_warm_start_mult_bound_push(const Scalar &value)
+        {
+            warm_start_mult_bound_push_ = value;
+        }
 
         // Register options
         void register_options(OptionRegistry& registry);

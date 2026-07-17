@@ -116,9 +116,60 @@ void print_dimensions(std::shared_ptr<IpData<ProblemType>> &ip_data_, std::strin
         return ip_data_->current_iterate().primal_x();
     }
     template <typename ProblemType>
+    const VecRealView &IpAlgorithm<ProblemType>::solution_slack() const
+    {
+        return ip_data_->current_iterate().primal_s();
+    }
+    template <typename ProblemType>
     const VecRealView &IpAlgorithm<ProblemType>::solution_dual() const
     {
         return ip_data_->current_iterate().dual_eq();
+    }
+    template <typename ProblemType>
+    const VecRealView &
+    IpAlgorithm<ProblemType>::solution_dual_bounds_lower() const
+    {
+        return ip_data_->current_iterate().dual_bounds_l();
+    }
+    template <typename ProblemType>
+    const VecRealView &
+    IpAlgorithm<ProblemType>::solution_dual_bounds_upper() const
+    {
+        return ip_data_->current_iterate().dual_bounds_u();
+    }
+    template <typename ProblemType>
+    Scalar IpAlgorithm<ProblemType>::barrier_parameter() const
+    {
+        return ip_data_->current_iterate().mu();
+    }
+    template <typename ProblemType>
+    Index IpAlgorithm<ProblemType>::iteration_count() const
+    {
+        return ip_data_->iteration_number();
+    }
+    template <typename ProblemType>
+    void IpAlgorithm<ProblemType>::set_warm_start(
+        const VecRealView &primal_x, const VecRealView &primal_s,
+        const VecRealView &dual_eq, const VecRealView &dual_bounds_l,
+        const VecRealView &dual_bounds_u, Scalar mu)
+    {
+        ip_data_->set_warm_start(primal_x, primal_s, dual_eq, dual_bounds_l,
+                                 dual_bounds_u, mu);
+    }
+    template <typename ProblemType>
+    void IpAlgorithm<ProblemType>::set_warm_start_from_solution()
+    {
+        ip_data_->set_warm_start_from_current_iterate();
+    }
+    template <typename ProblemType>
+    void IpAlgorithm<ProblemType>::clear_warm_start()
+    {
+        ip_data_->clear_warm_start();
+    }
+    template <typename ProblemType>
+    bool IpAlgorithm<ProblemType>::has_warm_start() const
+    {
+        return ip_data_->has_warm_start();
     }
 
 } // namespace fatrop

@@ -10,10 +10,22 @@
 
 #include <chrono>
 #include <map>
+#include <numeric>
 
 using namespace fatrop;
 
 Hessian<OcpType>::Hessian(const ProblemDims &dims)
+    : global_parameter_cross_hessian(
+          std::accumulate(dims.number_of_states.begin(),
+                          dims.number_of_states.end(), 0)
+        + std::accumulate(dims.number_of_controls.begin(),
+                          dims.number_of_controls.end(), 0),
+          std::max<Index>(dims.number_of_global_parameters, 1)),
+      global_parameter_hessian(
+          std::max<Index>(dims.number_of_global_parameters, 1),
+          std::max<Index>(dims.number_of_global_parameters, 1)),
+      global_parameter_rhs(
+          std::max<Index>(dims.number_of_global_parameters, 1))
 {
     // reserve memory for the Jacobian matrices
     RSQrqt.reserve(dims.K);
@@ -36,6 +48,24 @@ void Hessian<OcpType>::apply_on_right(const OcpInfo &info, const VecRealView &x,
         gemv_t(nu + nx, nu + nx, 1.0, RSQrqt[k], 0, 0, x, offset_ux, alpha, y, offset_ux, out,
                offset_ux);
     }
+    if (info.number_of_global_parameters > 0)
+    {
+        gemv_n(info.number_of_global_parameters,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_hessian, 0, 0, x,
+               info.offset_primal_global, alpha, y,
+               info.offset_primal_global, out,
+               info.offset_primal_global);
+        gemv_n(info.number_of_trajectory_variables,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_cross_hessian, 0, 0, x,
+               info.offset_primal_global, 1.0, out, 0, out, 0);
+        gemv_t(info.number_of_trajectory_variables,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_cross_hessian, 0, 0, x, 0,
+               1.0, out, info.offset_primal_global,
+               out, info.offset_primal_global);
+    }
 };
 void Hessian<OcpType>::get_rhs(const OcpInfo &info, VecRealView &out) const
 {
@@ -49,6 +79,10 @@ void Hessian<OcpType>::get_rhs(const OcpInfo &info, VecRealView &out) const
         // the rhs is the last row of the RSQrqt[k] matrix
         rowex(nu + nx, 1.0, RSQrqt[k], nu + nx, 0, out, offset_ux);
     }
+    for (Index parameter = 0;
+         parameter < info.number_of_global_parameters; ++parameter)
+        out(info.offset_primal_global + parameter) =
+            global_parameter_rhs(parameter);
 };
 void Hessian<OcpType>::set_rhs(const OcpInfo &info, const VecRealView &in)
 {
@@ -62,11 +96,18 @@ void Hessian<OcpType>::set_rhs(const OcpInfo &info, const VecRealView &in)
         // the rhs is the last row of the RSQrqt[k] matrix
         rowin(nu + nx, 1.0, in, offset_ux, RSQrqt[k], nu + nx, 0);
     }
+    for (Index parameter = 0;
+         parameter < info.number_of_global_parameters; ++parameter)
+        global_parameter_rhs(parameter) =
+            in(info.offset_primal_global + parameter);
 };
 void Hessian<OcpType>::set_zero()
 {
     for (auto &RSQ : RSQrqt)
         gese(RSQ.m(), RSQ.n(), 0.0, RSQ, 0, 0);
+    global_parameter_cross_hessian = 0.0;
+    global_parameter_hessian = 0.0;
+    global_parameter_rhs = 0.0;
 }
 // make printable
 namespace fatrop
@@ -156,14 +197,29 @@ void Hessian<ImplicitOcpType>::apply_on_right(const OcpInfo& info,
     if (print_debug){ std::cout << "Hessian<ImplicitOcpType>::apply_on_right" << std::endl;}
     for (Index k = 0; k < info.dims.K; ++k)
     {
-        // get the dimensions of the Hessian matrix
-        Index nu = info.dims.number_of_controls[k];
-        Index nx = info.dims.number_of_states[k];
-        // get the offsets of the current variables in x, and out
-        Index offset_ux = info.offsets_primal_u[k];
-        // apply out[offs:offs+nu+nx] =  RSQ @ x[offs:offs+nu+nx]
-        gemv_t(nu + nx, nu + nx, 1.0, RSQrqt[k], 0, 0, x, offset_ux, alpha, y, offset_ux, out,
-               offset_ux);
+        Index const nu = info.dims.number_of_controls[k];
+        Index const nx = info.dims.number_of_states[k];
+        Index const offset_ux = info.offsets_primal_u[k];
+        gemv_t(nu + nx, nu + nx, 1.0, RSQrqt[k], 0, 0,
+               x, offset_ux, alpha, y, offset_ux, out, offset_ux);
+    }
+    if (info.number_of_global_parameters > 0)
+    {
+        gemv_n(info.number_of_global_parameters,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_hessian, 0, 0, x,
+               info.offset_primal_global, alpha, y,
+               info.offset_primal_global, out,
+               info.offset_primal_global);
+        gemv_n(info.number_of_trajectory_variables,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_cross_hessian, 0, 0, x,
+               info.offset_primal_global, 1.0, out, 0, out, 0);
+        gemv_t(info.number_of_trajectory_variables,
+               info.number_of_global_parameters, 1.0,
+               global_parameter_cross_hessian, 0, 0, x, 0,
+               1.0, out, info.offset_primal_global,
+               out, info.offset_primal_global);
     }
 
     // add additional terms

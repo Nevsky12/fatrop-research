@@ -24,9 +24,14 @@
 #include "generators/batch_reactor_generator.hpp"
 #include "generators/solar_receiver_reactor_generator.hpp"
 #include "generators/manipulator_path_follower_generator.hpp"
+#if __has_include("generators/pendulum_generator.hpp")
 #include "generators/pendulum_generator.hpp"
+#define FATROP_HAS_LEGACY_PENDULUM_GENERATOR 1
+#else
+#define FATROP_HAS_LEGACY_PENDULUM_GENERATOR 0
+#endif
 
-#include "json/single_include/nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <fstream>
 #include <tuple>
@@ -593,7 +598,13 @@ int main(int argc, char **argv)
         } else if (std::string(argv[2]) == "path_follower"){
             generator = std::make_unique<ManipulatorPathFollower>();
         } else if (std::string(argv[2]) == "pendulum"){
+#if FATROP_HAS_LEGACY_PENDULUM_GENERATOR
             generator = std::make_unique<PendulumGenerator>();
+#else
+            std::cerr << "The legacy pendulum generator is not present in this source tree."
+                      << std::endl;
+            return 1;
+#endif
         } else {
             std::cout << "Second argument should be either \"truck_trailer\", \"bycicle\", \"example_static\", \"holonomic\", \"planar_robot\", \"quadruped\", \"batch_reactor\" \"solar_receiver_reactor\" or \"path_follower\" when first argument is \"single\"" << std::endl;
             return 0;

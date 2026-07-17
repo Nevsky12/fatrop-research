@@ -7,6 +7,8 @@
 #include "fatrop/linear_algebra/vector.hpp"
 #include "fatrop/ocp/aug_system_solver.hpp"
 #include "fatrop/ocp/problem_info.hpp"
+#include <algorithm>
+#include <type_traits>
 using namespace fatrop;
 
 // instantiate the template class
@@ -26,9 +28,186 @@ PdSolverOrig<ProblemType>::PdSolverOrig(const ProblemInfo &info,
       sigma_inverse_(info.number_of_slack_variables), ss_(info.number_of_slack_variables),
       g_ii_(info.number_of_slack_variables), D_ii_(info.number_of_slack_variables),
       gg_(info.number_of_eq_constraints), x_aug_(info.number_of_primal_variables),
-      mult_aug_(info.number_of_eq_constraints), aug_system_solver_(aug_system_solver)
+      mult_aug_(info.number_of_eq_constraints),
+      parameter_hessian_regularized_(
+          std::max<Index>(info.number_of_global_parameters, 1),
+          std::max<Index>(info.number_of_global_parameters, 1)),
+      aug_system_solver_(aug_system_solver)
 {
+    if constexpr (!std::is_same_v<ProblemType, AcceleratedOcpType>)
+    {
+        if (info.number_of_global_parameters > 0)
+            border_solver_ = std::make_unique<BorderSolver>(
+                info, info.number_of_global_parameters, aug_system_solver_);
+    }
 }
+
+template <typename ProblemType>
+void PdSolverOrig<ProblemType>::assemble_regularized_parameter_hessian(
+    LinearSystem<PdSystemType<ProblemType>> &ls)
+{
+    const Index np = ls.info_.number_of_global_parameters;
+    parameter_hessian_regularized_ = 0.0;
+    for (Index row = 0; row < np; ++row)
+    {
+        for (Index column = 0; column < np; ++column)
+            parameter_hessian_regularized_(row, column) =
+                ls.hess_.global_parameter_hessian(row, column);
+        parameter_hessian_regularized_(row, row) +=
+            ls.D_x_(ls.info_.offset_primal_global + row);
+    }
+}
+
+template <typename ProblemType>
+LinsolReturnFlag PdSolverOrig<ProblemType>::solve_augmented_system(
+    LinearSystem<PdSystemType<ProblemType>> &ls)
+{
+    const Index np = ls.info_.number_of_global_parameters;
+    if (np == 0)
+    {
+        if (ls.De_is_zero_)
+            return aug_system_solver_->solve(
+                ls.info_, ls.jac_, ls.hess_, ls.D_x_, D_ii_,
+                ls.rhs_f_x_, gg_, x_aug_, mult_aug_);
+        return aug_system_solver_->solve(
+            ls.info_, ls.jac_, ls.hess_, ls.D_x_,
+            ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path),
+            D_ii_, ls.rhs_f_x_, gg_, x_aug_, mult_aug_);
+    }
+
+    if constexpr (std::is_same_v<ProblemType, AcceleratedOcpType>)
+    {
+        return LinsolReturnFlag::NOFULL_RANK;
+    }
+    else
+    {
+        assemble_regularized_parameter_hessian(ls);
+        VecRealView trajectory_diagonal = ls.D_x_.block(
+            ls.info_.number_of_trajectory_variables, ls.info_.offset_primal);
+        VecRealView trajectory_rhs = ls.rhs_f_x_.block(
+            ls.info_.number_of_trajectory_variables, ls.info_.offset_primal);
+        VecRealView parameter_rhs = ls.rhs_f_x_.block(
+            np, ls.info_.offset_primal_global);
+        VecRealView trajectory_solution = x_aug_.block(
+            ls.info_.number_of_trajectory_variables, ls.info_.offset_primal);
+        VecRealView parameter_solution = x_aug_.block(
+            np, ls.info_.offset_primal_global);
+        MatRealView cross_hessian =
+            ls.hess_.global_parameter_cross_hessian.block(
+                ls.info_.number_of_trajectory_variables, np, 0, 0);
+        MatRealView parameter_jacobian =
+            ls.jac_.global_parameter_jacobian.block(
+                ls.info_.number_of_eq_constraints, np, 0, 0);
+        MatRealView parameter_hessian =
+            parameter_hessian_regularized_.block(np, np, 0, 0);
+
+        if (ls.De_is_zero_)
+            return border_solver_->solve(
+                ls.info_, ls.jac_, ls.hess_, trajectory_diagonal, D_ii_,
+                cross_hessian, parameter_jacobian, parameter_hessian,
+                trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+
+        if constexpr (std::is_same_v<ProblemType, ImplicitOcpType>)
+        {
+            VecRealView path_equality_diagonal = ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path);
+            return border_solver_->solve(
+                ls.info_, ls.jac_, ls.hess_, trajectory_diagonal,
+                path_equality_diagonal, D_ii_, cross_hessian, parameter_jacobian,
+                parameter_hessian, trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+        }
+        else
+        {
+            VecRealView path_equality_diagonal = ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path);
+            return border_solver_->solve(
+                ls.info_, ls.jac_, ls.hess_, trajectory_diagonal,
+                path_equality_diagonal, D_ii_, cross_hessian,
+                parameter_jacobian, parameter_hessian,
+                trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+        }
+    }
+}
+
+template <typename ProblemType>
+LinsolReturnFlag PdSolverOrig<ProblemType>::solve_augmented_rhs(
+    LinearSystem<PdSystemType<ProblemType>> &ls)
+{
+    const Index np = ls.info_.number_of_global_parameters;
+    if (np == 0)
+    {
+        if (ls.De_is_zero_)
+            return aug_system_solver_->solve_rhs(
+                ls.info_, ls.jac_, ls.hess_, D_ii_,
+                ls.rhs_f_x_, gg_, x_aug_, mult_aug_);
+        return aug_system_solver_->solve_rhs(
+            ls.info_, ls.jac_, ls.hess_,
+            ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path),
+            D_ii_, ls.rhs_f_x_, gg_, x_aug_, mult_aug_);
+    }
+
+    if constexpr (std::is_same_v<ProblemType, AcceleratedOcpType>)
+    {
+        return LinsolReturnFlag::NOFULL_RANK;
+    }
+    else
+    {
+        VecRealView trajectory_rhs = ls.rhs_f_x_.block(
+            ls.info_.number_of_trajectory_variables, ls.info_.offset_primal);
+        VecRealView parameter_rhs = ls.rhs_f_x_.block(
+            np, ls.info_.offset_primal_global);
+        VecRealView trajectory_solution = x_aug_.block(
+            ls.info_.number_of_trajectory_variables, ls.info_.offset_primal);
+        VecRealView parameter_solution = x_aug_.block(
+            np, ls.info_.offset_primal_global);
+        MatRealView cross_hessian =
+            ls.hess_.global_parameter_cross_hessian.block(
+                ls.info_.number_of_trajectory_variables, np, 0, 0);
+        MatRealView parameter_jacobian =
+            ls.jac_.global_parameter_jacobian.block(
+                ls.info_.number_of_eq_constraints, np, 0, 0);
+
+        if (ls.De_is_zero_)
+            return border_solver_->solve_rhs(
+                ls.info_, ls.jac_, ls.hess_, D_ii_,
+                cross_hessian, parameter_jacobian,
+                trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+
+        if constexpr (std::is_same_v<ProblemType, ImplicitOcpType>)
+        {
+            VecRealView path_equality_diagonal = ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path);
+            return border_solver_->solve_rhs(
+                ls.info_, ls.jac_, ls.hess_, path_equality_diagonal, D_ii_,
+                cross_hessian, parameter_jacobian,
+                trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+        }
+        else
+        {
+            VecRealView path_equality_diagonal = ls.D_e_.block(
+                ls.info_.number_of_g_eq_path,
+                ls.info_.offset_g_eq_path);
+            return border_solver_->solve_rhs(
+                ls.info_, ls.jac_, ls.hess_, path_equality_diagonal, D_ii_,
+                cross_hessian, parameter_jacobian,
+                trajectory_rhs, gg_, parameter_rhs,
+                trajectory_solution, mult_aug_, parameter_solution);
+        }
+    }
+}
+
 template <typename ProblemType>
 void PdSolverOrig<ProblemType>::reduce(LinearSystem<PdSystemType<ProblemType>> &ls)
 {
@@ -106,13 +285,7 @@ LinsolReturnFlag PdSolverOrig<ProblemType>::solve_once_impl(LinearSystem<PdSyste
     //  This system is in the Augmented system form and can be solved by AugSystemSolver<OcpType>
     // call aug_system_solver to solve the system
     reduce(ls);
-    LinsolReturnFlag ret;
-    if (ls.De_is_zero_)
-        ret = aug_system_solver_->solve(ls.info_, ls.jac_, ls.hess_, ls.D_x_, D_ii_, ls.rhs_f_x_,
-                                        gg_, x_aug_, mult_aug_);
-    else
-        ret = aug_system_solver_->solve(ls.info_, ls.jac_, ls.hess_, ls.D_x_, ls.D_e_.block(ls.info_.number_of_g_eq_path, ls.info_.offset_g_eq_path), D_ii_,
-                                        ls.rhs_f_x_, gg_, x_aug_, mult_aug_);
+    const LinsolReturnFlag ret = solve_augmented_system(ls);
     dereduce(ls, x);
     return ret;
 }
@@ -120,12 +293,7 @@ template <typename ProblemType>
 void PdSolverOrig<ProblemType>::solve_rhs_impl(LinearSystem<PdSystemType<ProblemType>> &ls, VecRealView &x)
 {
     reduce(ls);
-    if (ls.De_is_zero_)
-        aug_system_solver_->solve_rhs(ls.info_, ls.jac_, ls.hess_, D_ii_, ls.rhs_f_x_, gg_, x_aug_,
-                                      mult_aug_);
-    else
-        aug_system_solver_->solve_rhs(ls.info_, ls.jac_, ls.hess_, ls.D_e_.block(ls.info_.number_of_g_eq_path, ls.info_.offset_g_eq_path), D_ii_, ls.rhs_f_x_, gg_,
-                                      x_aug_, mult_aug_);
+    (void)solve_augmented_rhs(ls);
     dereduce(ls, x);
 }
 

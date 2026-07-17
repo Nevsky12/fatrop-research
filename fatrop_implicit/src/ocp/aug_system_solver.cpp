@@ -132,6 +132,36 @@ bool check_reg(const Index m, MAT *sA, const Index ai, const Index aj)
     return true;
 }
 
+namespace
+{
+void solve_upper_unit_rectangular_batch(
+    const Index leading_rows, const Index total_rows,
+    const Index right_hand_sides, const MatRealView &factor,
+    const Index factor_row, const Index factor_column,
+    MatRealView &values, const Index value_row,
+    const Index value_column)
+{
+    if (leading_rows < total_rows)
+    {
+        gemm_nn(
+            leading_rows, right_hand_sides,
+            total_rows - leading_rows, -1.0,
+            factor, factor_row, factor_column + leading_rows,
+            values, value_row + leading_rows, value_column,
+            1.0, values, value_row, value_column,
+            values, value_row, value_column);
+    }
+    if (leading_rows > 0)
+    {
+        trsm_lunu(
+            leading_rows, right_hand_sides, 1.0,
+            factor, factor_row, factor_column,
+            values, value_row, value_column,
+            values, value_row, value_column);
+    }
+}
+} // namespace
+
 AugSystemSolver<OcpType>::AugSystemSolver(const ProblemInfo &info)
 {
     Index max_number_of_controls =
@@ -1053,6 +1083,658 @@ LinsolReturnFlag AugSystemSolver<OcpType>::solve_rhs(const ProblemInfo &info,
     }
     return LinsolReturnFlag::SUCCESS;
 }
+
+LinsolReturnFlag AugSystemSolver<OcpType>::solve_rhs_batch(
+    const ProblemInfo &info,
+    const Jacobian<OcpType> &jacobian,
+    const Hessian<OcpType> &hessian,
+    const VecRealView &D_s,
+    const MatRealView &f,
+    const MatRealView &g,
+    MatRealView &x,
+    MatRealView &eq_mult)
+{
+    const Index right_hand_sides = f.n();
+    fatrop_dbg_assert(f.m() == info.number_of_primal_variables);
+    fatrop_dbg_assert(g.m() == info.number_of_eq_constraints);
+    fatrop_dbg_assert(g.n() == right_hand_sides);
+    fatrop_dbg_assert(x.m() == info.number_of_primal_variables);
+    fatrop_dbg_assert(x.n() == right_hand_sides);
+    fatrop_dbg_assert(eq_mult.m() == info.number_of_eq_constraints);
+    fatrop_dbg_assert(eq_mult.n() == right_hand_sides);
+    (void)hessian;
+
+    if (right_hand_sides == 0)
+        return LinsolReturnFlag::SUCCESS;
+
+    const Index max_number_of_controls =
+        *std::max_element(
+            info.dims.number_of_controls.begin(),
+            info.dims.number_of_controls.end());
+    const Index max_number_of_states =
+        *std::max_element(
+            info.dims.number_of_states.begin(),
+            info.dims.number_of_states.end());
+    const Index max_number_of_variables =
+        *std::max_element(
+            info.number_of_stage_variables.begin(),
+            info.number_of_stage_variables.end());
+    const Index max_number_of_ineq_constraints =
+        *std::max_element(
+            info.dims.number_of_ineq_constraints.begin(),
+            info.dims.number_of_ineq_constraints.end());
+
+    std::vector<MatRealAllocated> batch_Ppt;
+    std::vector<MatRealAllocated> batch_Hh;
+    std::vector<MatRealAllocated> batch_RSQrqt_tilde;
+    std::vector<MatRealAllocated> batch_Ggt_tilde;
+    std::vector<MatRealAllocated> batch_Llt;
+    batch_Ppt.reserve(info.dims.K);
+    batch_Hh.reserve(info.dims.K);
+    batch_RSQrqt_tilde.reserve(info.dims.K);
+    batch_Ggt_tilde.reserve(info.dims.K);
+    batch_Llt.reserve(info.dims.K);
+    for (Index k = 0; k < info.dims.K; ++k)
+    {
+        const Index nu = info.dims.number_of_controls[k];
+        const Index nx = info.dims.number_of_states[k];
+        batch_Ppt.emplace_back(nx, right_hand_sides);
+        batch_Hh.emplace_back(nx, right_hand_sides);
+        batch_RSQrqt_tilde.emplace_back(
+            nu + nx, right_hand_sides);
+        batch_Ggt_tilde.emplace_back(
+            nu + nx, right_hand_sides);
+        batch_Llt.emplace_back(
+            nu + nx, right_hand_sides);
+    }
+
+    MatRealAllocated batch_AL(
+        max_number_of_variables, right_hand_sides);
+    MatRealAllocated batch_Ggt_rhs(
+        max_number_of_variables, right_hand_sides);
+    MatRealAllocated batch_GgLt(
+        max_number_of_variables, right_hand_sides);
+    MatRealAllocated batch_RSQrqt_hat(
+        max_number_of_variables, right_hand_sides);
+    MatRealAllocated batch_GgIt_tilde(
+        max_number_of_states, right_hand_sides);
+    MatRealAllocated batch_GgLIt(
+        max_number_of_states, right_hand_sides);
+    MatRealAllocated batch_HhIt(
+        max_number_of_states, right_hand_sides);
+    MatRealAllocated batch_PpIt_hat(
+        max_number_of_states, right_hand_sides);
+    MatRealAllocated batch_LlIt(
+        max_number_of_states, right_hand_sides);
+    MatRealAllocated batch_ineq(
+        max_number_of_ineq_constraints, right_hand_sides);
+    MatRealAllocated batch_tmp(
+        max_number_of_variables, right_hand_sides);
+    x = 0.0;
+    eq_mult = 0.0;
+
+    for (Index k = info.dims.K; k-- > 0;)
+    {
+        const Index nu = info.dims.number_of_controls[k];
+        const Index nx = info.dims.number_of_states[k];
+        const Index ng = info.dims.number_of_eq_constraints[k];
+        const Index ng_ineq =
+            info.dims.number_of_ineq_constraints[k];
+        const Index offset_ineq_k = info.offsets_slack[k];
+        const Index offs_g_ineq_k =
+            info.offsets_g_eq_slack[k];
+        const Index offs_g_k =
+            info.offsets_g_eq_path[k];
+        const Index offs = info.offsets_primal_u[k];
+
+        Index gamma_k = 0;
+        if (k == info.dims.K - 1)
+        {
+            gamma_k = ng;
+            if (ng > 0)
+            {
+                gecp(
+                    ng, right_hand_sides,
+                    g, offs_g_k, 0,
+                    batch_Ggt_rhs, 0, 0);
+            }
+            gecp(
+                nu + nx, right_hand_sides,
+                f, offs, 0,
+                batch_RSQrqt_tilde[k], 0, 0);
+        }
+        else
+        {
+            const Index offs_dyn_k =
+                info.offsets_g_eq_dyn[k];
+            const Index nxp1 =
+                info.dims.number_of_states[k + 1];
+            const Index Hp1_size =
+                gamma[k + 1] - rho[k + 1];
+            gamma_k = Hp1_size + ng;
+
+            gemm_nn(
+                nxp1, right_hand_sides, nxp1, 1.0,
+                Ppt[k + 1], 0, 0,
+                g, offs_dyn_k, 0,
+                0.0, batch_AL, 0, 0,
+                batch_AL, 0, 0);
+            gead(
+                nxp1, right_hand_sides, 1.0,
+                batch_Ppt[k + 1], 0, 0,
+                batch_AL, 0, 0);
+            gecp(
+                nu + nx, right_hand_sides,
+                f, offs, 0,
+                batch_RSQrqt_tilde[k], 0, 0);
+            gemm_nn(
+                nu + nx, right_hand_sides, nxp1, 1.0,
+                jacobian.BAbt[k], 0, 0,
+                batch_AL, 0, 0,
+                1.0, batch_RSQrqt_tilde[k], 0, 0,
+                batch_RSQrqt_tilde[k], 0, 0);
+
+            if (ng > 0)
+            {
+                gecp(
+                    ng, right_hand_sides,
+                    g, offs_g_k, 0,
+                    batch_Ggt_rhs, 0, 0);
+            }
+            if (Hp1_size > 0)
+            {
+                gemm_nn(
+                    Hp1_size, right_hand_sides, nxp1, 1.0,
+                    Hh[k + 1], 0, 0,
+                    g, offs_dyn_k, 0,
+                    0.0, batch_Ggt_rhs, ng, 0,
+                    batch_Ggt_rhs, ng, 0);
+                gead(
+                    Hp1_size, right_hand_sides, 1.0,
+                    batch_Hh[k + 1], 0, 0,
+                    batch_Ggt_rhs, ng, 0);
+            }
+        }
+
+        if (ng_ineq > 0)
+        {
+            gecp(
+                ng_ineq, right_hand_sides,
+                g, offs_g_ineq_k, 0,
+                batch_ineq, 0, 0);
+            for (Index equation = 0;
+                 equation < ng_ineq; ++equation)
+            {
+                const Scalar inverse_scale =
+                    1.0 / D_s(offset_ineq_k + equation);
+                for (Index column = 0;
+                     column < right_hand_sides; ++column)
+                {
+                    batch_ineq(equation, column) *=
+                        inverse_scale;
+                }
+            }
+            gemm_nn(
+                nu + nx, right_hand_sides, ng_ineq, 1.0,
+                jacobian.Gg_ineqt[k], 0, 0,
+                batch_ineq, 0, 0,
+                1.0, batch_RSQrqt_tilde[k], 0, 0,
+                batch_RSQrqt_tilde[k], 0, 0);
+        }
+
+        const Index rank_k = rho[k];
+        if (rank_k > 0)
+        {
+            gecp(
+                rank_k, gamma_k,
+                Ggt_tilde[k], nu - rank_k + nx + 1, 0,
+                Ggt_stripe[0], 0, 0);
+            Pl[k].apply_on_rows(
+                rank_k, &batch_Ggt_rhs.mat(), 0,
+                right_hand_sides);
+            trsm_lutu(
+                rank_k, right_hand_sides, 1.0,
+                Ggt_stripe[0], 0, 0,
+                batch_Ggt_rhs, 0, 0,
+                batch_Ggt_rhs, 0, 0);
+        }
+        if (gamma_k - rank_k > 0 && rank_k > 0)
+        {
+            gemm_tn(
+                gamma_k - rank_k, right_hand_sides,
+                rank_k, -1.0,
+                Ggt_stripe[0], 0, rank_k,
+                batch_Ggt_rhs, 0, 0,
+                1.0, batch_Ggt_rhs, rank_k, 0,
+                batch_Ggt_rhs, rank_k, 0);
+        }
+        if (gamma_k - rank_k > 0)
+        {
+            gecp(
+                gamma_k - rank_k, right_hand_sides,
+                batch_Ggt_rhs, rank_k, 0,
+                batch_Hh[k], 0, 0);
+        }
+
+        MatRealView *batch_RSQrq_hat = nullptr;
+        if (rank_k > 0)
+        {
+            gecp(
+                rank_k, right_hand_sides,
+                batch_Ggt_rhs, 0, 0,
+                batch_Ggt_tilde[k], 0, 0);
+            gesc(
+                rank_k, right_hand_sides, -1.0,
+                batch_Ggt_tilde[k], 0, 0);
+            trsm_lltn(
+                rank_k, right_hand_sides, 1.0,
+                Ggt_stripe[0], 0, 0,
+                batch_Ggt_tilde[k], 0, 0,
+                batch_Ggt_tilde[k], 0, 0);
+
+            Pr[k].apply_on_rows(
+                rank_k, &batch_RSQrqt_tilde[k].mat(),
+                0, right_hand_sides);
+            gecp(
+                nu + nx, right_hand_sides,
+                batch_RSQrqt_tilde[k], 0, 0,
+                batch_GgLt, 0, 0);
+            gemm_nn(
+                nu + nx, right_hand_sides, rank_k, 1.0,
+                RSQrqt_tilde[k], 0, 0,
+                batch_Ggt_tilde[k], 0, 0,
+                1.0, batch_GgLt, 0, 0,
+                batch_GgLt, 0, 0);
+            gemm_nn(
+                nu + nx - rank_k, right_hand_sides,
+                rank_k, 1.0,
+                Ggt_tilde[k], 0, 0,
+                batch_GgLt, 0, 0,
+                1.0, batch_GgLt, rank_k, 0,
+                batch_RSQrqt_hat, 0, 0);
+            batch_RSQrq_hat = &batch_RSQrqt_hat;
+        }
+        else
+        {
+            batch_RSQrq_hat =
+                &batch_RSQrqt_tilde[k];
+        }
+
+        const Index reduced_controls = nu - rank_k;
+        if (reduced_controls > 0)
+        {
+            trsm_llnn(
+                reduced_controls, right_hand_sides, 1.0,
+                Llt[k], 0, 0,
+                *batch_RSQrq_hat, 0, 0,
+                batch_Llt[k], 0, 0);
+            gecp(
+                nx, right_hand_sides,
+                *batch_RSQrq_hat, reduced_controls, 0,
+                batch_Ppt[k], 0, 0);
+            gemm_nn(
+                nx, right_hand_sides, reduced_controls,
+                -1.0, Llt[k], reduced_controls, 0,
+                batch_Llt[k], 0, 0,
+                1.0, batch_Ppt[k], 0, 0,
+                batch_Ppt[k], 0, 0);
+            if (increased_accuracy &&
+                gamma_k - rank_k > 0)
+            {
+                gemm_tn(
+                    gamma_k - rank_k,
+                    right_hand_sides,
+                    reduced_controls, -1.0,
+                    Ggt_tilde[k], 0, rank_k,
+                    batch_Llt[k], 0, 0,
+                    1.0, batch_Hh[k], 0, 0,
+                    batch_Hh[k], 0, 0);
+            }
+        }
+        else
+        {
+            gecp(
+                nx, right_hand_sides,
+                *batch_RSQrq_hat, 0, 0,
+                batch_Ppt[k], 0, 0);
+        }
+    }
+
+    const Index nx0 = info.dims.number_of_states[0];
+    const Index gamma_I = gamma[0] - rho[0];
+    if (gamma_I > 0)
+    {
+        gecp(
+            gamma_I, right_hand_sides,
+            batch_Hh[0], 0, 0,
+            batch_HhIt, 0, 0);
+        PlI[0].apply_on_rows(
+            rankI, &batch_HhIt.mat(), 0,
+            right_hand_sides);
+        if (rankI > 0)
+        {
+            trsm_lutu(
+                rankI, right_hand_sides, 1.0,
+                HhIt[0], 0, 0,
+                batch_HhIt, 0, 0,
+                batch_HhIt, 0, 0);
+        }
+        if (gamma_I - rankI > 0 && rankI > 0)
+        {
+            gemm_tn(
+                gamma_I - rankI, right_hand_sides,
+                rankI, -1.0,
+                HhIt[0], 0, rankI,
+                batch_HhIt, 0, 0,
+                1.0, batch_HhIt, rankI, 0,
+                batch_HhIt, rankI, 0);
+        }
+        if (rankI > 0)
+        {
+            gecp(
+                rankI, right_hand_sides,
+                batch_HhIt, 0, 0,
+                batch_GgIt_tilde, 0, 0);
+            gesc(
+                rankI, right_hand_sides, -1.0,
+                batch_GgIt_tilde, 0, 0);
+            trsm_lltn(
+                rankI, right_hand_sides, 1.0,
+                HhIt[0], 0, 0,
+                batch_GgIt_tilde, 0, 0,
+                batch_GgIt_tilde, 0, 0);
+        }
+        PrI[0].apply_on_rows(
+            rankI, &batch_Ppt[0].mat(), 0,
+            right_hand_sides);
+        gecp(
+            nx0, right_hand_sides,
+            batch_Ppt[0], 0, 0,
+            batch_GgLIt, 0, 0);
+        if (rankI > 0)
+        {
+            gemm_nn(
+                nx0, right_hand_sides, rankI, 1.0,
+                Ppt[0], 0, 0,
+                batch_GgIt_tilde, 0, 0,
+                1.0, batch_GgLIt, 0, 0,
+                batch_GgLIt, 0, 0);
+        }
+        if (nx0 - rankI > 0)
+        {
+            gemm_nn(
+                nx0 - rankI, right_hand_sides,
+                rankI, 1.0,
+                GgIt_tilde[0], 0, 0,
+                batch_GgLIt, 0, 0,
+                1.0, batch_GgLIt, rankI, 0,
+                batch_PpIt_hat, 0, 0);
+            trsm_llnn(
+                nx0 - rankI, right_hand_sides, 1.0,
+                LlIt[0], 0, 0,
+                batch_PpIt_hat, 0, 0,
+                batch_LlIt, 0, 0);
+        }
+    }
+    else
+    {
+        trsm_llnn(
+            nx0, right_hand_sides, 1.0,
+            LlIt[0], 0, 0,
+            batch_Ppt[0], 0, 0,
+            batch_LlIt, 0, 0);
+    }
+
+    const Index offs_x0 = info.offsets_primal_x[0];
+    const Index offs_g0 = info.offsets_g_eq_path[0];
+    if (nx0 - rankI > 0)
+    {
+        gecp(
+            nx0 - rankI, right_hand_sides,
+            batch_LlIt, 0, 0,
+            x, offs_x0 + rankI, 0);
+        gesc(
+            nx0 - rankI, right_hand_sides, -1.0,
+            x, offs_x0 + rankI, 0);
+        trsm_lltn(
+            nx0 - rankI, right_hand_sides, 1.0,
+            LlIt[0], 0, 0,
+            x, offs_x0 + rankI, 0,
+            x, offs_x0 + rankI, 0);
+    }
+    if (rankI > 0)
+    {
+        gecp(
+            rankI, right_hand_sides,
+            batch_GgIt_tilde, 0, 0,
+            x, offs_x0, 0);
+        if (nx0 - rankI > 0)
+        {
+            gemm_tn(
+                rankI, right_hand_sides,
+                nx0 - rankI, 1.0,
+                GgIt_tilde[0], 0, 0,
+                x, offs_x0 + rankI, 0,
+                1.0, x, offs_x0, 0,
+                x, offs_x0, 0);
+        }
+        gecp(
+            rankI, right_hand_sides,
+            batch_Ppt[0], 0, 0,
+            eq_mult, offs_g0, 0);
+        gesc(
+            rankI, right_hand_sides, -1.0,
+            eq_mult, offs_g0, 0);
+        gemm_tn(
+            rankI, right_hand_sides, nx0, -1.0,
+            Ppt[0], 0, 0,
+            x, offs_x0, 0,
+            1.0, eq_mult, offs_g0, 0,
+            eq_mult, offs_g0, 0);
+        trsm_llnn(
+            rankI, right_hand_sides, 1.0,
+            HhIt[0], 0, 0,
+            eq_mult, offs_g0, 0,
+            eq_mult, offs_g0, 0);
+        trsm_lunu(
+            rankI, right_hand_sides, 1.0,
+            HhIt[0], 0, 0,
+            eq_mult, offs_g0, 0,
+            eq_mult, offs_g0, 0);
+        PlI[0].apply_inverse_on_rows(
+            rankI, &eq_mult.mat(), offs_g0);
+        PrI[0].apply_inverse_on_rows(
+            rankI, &x.mat(), offs_x0);
+    }
+    for (Index k = 0; k < info.dims.K; ++k)
+    {
+        const Index nx = info.dims.number_of_states[k];
+        const Index nu = info.dims.number_of_controls[k];
+        const Index offs = info.offsets_primal_u[k];
+        const Index offs_x = info.offsets_primal_x[k];
+        const Index rho_k = rho[k];
+        const Index reduced_controls = nu - rho_k;
+        const Index offs_g_k =
+            info.offsets_g_eq_path[k];
+        const Index gamma_minus_rank =
+            gamma[k] - rho[k];
+        const Index gamma_k = gamma[k];
+        const Index ng_ineq =
+            info.dims.number_of_ineq_constraints[k];
+        const Index offs_eq_ineq =
+            info.offsets_g_eq_slack[k];
+        const Index offs_slack = info.offsets_slack[k];
+
+        if (reduced_controls > 0)
+        {
+            gecp(
+                reduced_controls, right_hand_sides,
+                batch_Llt[k], 0, 0,
+                x, offs + rho_k, 0);
+            gesc(
+                reduced_controls, right_hand_sides, -1.0,
+                x, offs + rho_k, 0);
+            if (increased_accuracy &&
+                gamma_minus_rank > 0)
+            {
+                gemm_nn(
+                    reduced_controls, right_hand_sides,
+                    gamma_minus_rank, -1.0,
+                    Ggt_tilde[k], 0, rho_k,
+                    eq_mult, offs_g_k, 0,
+                    1.0, x, offs + rho_k, 0,
+                    x, offs + rho_k, 0);
+            }
+            gemm_tn(
+                reduced_controls, right_hand_sides,
+                nx, -1.0,
+                Llt[k], reduced_controls, 0,
+                x, offs_x, 0,
+                1.0, x, offs + rho_k, 0,
+                x, offs + rho_k, 0);
+            trsm_lltn(
+                reduced_controls, right_hand_sides, 1.0,
+                Llt[k], 0, 0,
+                x, offs + rho_k, 0,
+                x, offs + rho_k, 0);
+        }
+
+        if (rho_k > 0)
+        {
+            gecp(
+                rho_k, right_hand_sides,
+                batch_Ggt_tilde[k], 0, 0,
+                x, offs, 0);
+            gemm_tn(
+                rho_k, right_hand_sides,
+                nx + reduced_controls, 1.0,
+                Ggt_tilde[k], 0, 0,
+                x, offs + rho_k, 0,
+                1.0, x, offs, 0,
+                x, offs, 0);
+
+            if (gamma_minus_rank > 0)
+            {
+                gecp(
+                    gamma_minus_rank, right_hand_sides,
+                    eq_mult, offs_g_k, 0,
+                    batch_tmp, 0, 0);
+                gecp(
+                    gamma_minus_rank, right_hand_sides,
+                    batch_tmp, 0, 0,
+                    eq_mult, offs_g_k + rho_k, 0);
+            }
+            gecp(
+                rho_k, right_hand_sides,
+                batch_RSQrqt_tilde[k], 0, 0,
+                eq_mult, offs_g_k, 0);
+            gesc(
+                rho_k, right_hand_sides, -1.0,
+                eq_mult, offs_g_k, 0);
+            gemm_tn(
+                rho_k, right_hand_sides,
+                nu + nx, -1.0,
+                RSQrqt_tilde[k], 0, 0,
+                x, offs, 0,
+                1.0, eq_mult, offs_g_k, 0,
+                eq_mult, offs_g_k, 0);
+            gecp(
+                rho_k, gamma_k,
+                Ggt_tilde[k],
+                nu - rho_k + nx + 1, 0,
+                AL[0], 0, 0);
+            trsm_llnn(
+                rho_k, right_hand_sides, 1.0,
+                AL[0], 0, 0,
+                eq_mult, offs_g_k, 0,
+                eq_mult, offs_g_k, 0);
+            solve_upper_unit_rectangular_batch(
+                rho_k, gamma_k, right_hand_sides,
+                AL[0], 0, 0,
+                eq_mult, offs_g_k, 0);
+            Pl[k].apply_inverse_on_rows(
+                rho_k, &eq_mult.mat(), offs_g_k);
+            Pr[k].apply_inverse_on_rows(
+                rho_k, &x.mat(), offs);
+        }
+
+        if (ng_ineq > 0)
+        {
+            gecp(
+                ng_ineq, right_hand_sides,
+                g, offs_eq_ineq, 0,
+                eq_mult, offs_eq_ineq, 0);
+            gemm_tn(
+                ng_ineq, right_hand_sides,
+                nu + nx, 1.0,
+                jacobian.Gg_ineqt[k], 0, 0,
+                x, offs, 0,
+                1.0, eq_mult, offs_eq_ineq, 0,
+                eq_mult, offs_eq_ineq, 0);
+            for (Index equation = 0;
+                 equation < ng_ineq; ++equation)
+            {
+                const Scalar inverse_scale =
+                    1.0 / D_s(offs_slack + equation);
+                for (Index column = 0;
+                     column < right_hand_sides; ++column)
+                {
+                    eq_mult(
+                        offs_eq_ineq + equation,
+                        column) *= inverse_scale;
+                }
+            }
+        }
+
+        if (k != info.dims.K - 1)
+        {
+            const Index nxp1 =
+                info.dims.number_of_states[k + 1];
+            const Index offs_x_p1 =
+                info.offsets_primal_x[k + 1];
+            const Index offs_g_kp1 =
+                info.offsets_g_eq_path[k + 1];
+            const Index offs_dyn_k =
+                info.offsets_g_eq_dyn[k];
+            const Index gamma_minus_rank_kp1 =
+                gamma[k + 1] - rho[k + 1];
+
+            gecp(
+                nxp1, right_hand_sides,
+                g, offs_dyn_k, 0,
+                x, offs_x_p1, 0);
+            gemm_tn(
+                nxp1, right_hand_sides,
+                nu + nx, 1.0,
+                jacobian.BAbt[k], 0, 0,
+                x, offs, 0,
+                1.0, x, offs_x_p1, 0,
+                x, offs_x_p1, 0);
+            gecp(
+                nxp1, right_hand_sides,
+                batch_Ppt[k + 1], 0, 0,
+                eq_mult, offs_dyn_k, 0);
+            gemm_tn(
+                nxp1, right_hand_sides, nxp1, 1.0,
+                Ppt[k + 1], 0, 0,
+                x, offs_x_p1, 0,
+                1.0, eq_mult, offs_dyn_k, 0,
+                eq_mult, offs_dyn_k, 0);
+            if (gamma_minus_rank_kp1 > 0)
+            {
+                gemm_tn(
+                    nxp1, right_hand_sides,
+                    gamma_minus_rank_kp1, 1.0,
+                    Hh[k + 1], 0, 0,
+                    eq_mult, offs_g_kp1, 0,
+                    1.0, eq_mult, offs_dyn_k, 0,
+                    eq_mult, offs_dyn_k, 0);
+            }
+        }
+    }
+    return LinsolReturnFlag::SUCCESS;
+}
+
 LinsolReturnFlag AugSystemSolver<OcpType>::solve_rhs(const ProblemInfo &info,
                                                const Jacobian<OcpType> &jacobian,
                                                const Hessian<OcpType> &hessian,
@@ -3406,9 +4088,6 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve(const ProblemInfo &info,
             if (print_debug_lines) {std::cout << __LINE__ << std::endl;}
             rowin(nu + nx, 1.0, f, offset_u, hessian.RSQrqt[k], nu + nx, 0);
             gecp(nx + nu + 1, nu + nx, hessian.RSQrqt[k], 0, 0, RSQrqt_underbar[k], 0, 0);
-            if (k > 0){
-                gecp(nunxm1, nx, hessian.FuFx[k-1], 0, 0, FuFx_underbar[k-1], 0, 0);
-            }
         }
         #ifdef PROFILE
         start = std::chrono::high_resolution_clock::now();
@@ -3416,6 +4095,13 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve(const ProblemInfo &info,
         if (k > 0){
             if (print_debug_lines) {std::cout << __LINE__ << std::endl;}
             gecp(nunxm1 + 1, nunxm1, hessian.RSQrqt[k-1], 0, 0, RSQrqt_underbar[k-1], 0, 0);
+            // The adjacent-stage Hessian belongs to the transition entering
+            // the current stage.  Refresh it at every backward step, just as
+            // the local Hessian above.  Copying only the terminal transition
+            // left all earlier full-rank FuFx blocks stale; rank-deficient
+            // paths happened to overwrite some of them while forming GuGx.
+            gecp(nunxm1, nx, hessian.FuFx[k-1], 0, 0,
+                 FuFx_underbar[k-1], 0, 0);
         }
         #ifdef PROFILE
         stop = std::chrono::high_resolution_clock::now();
@@ -4049,6 +4735,23 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve(const ProblemInfo &info,
                                            VecRealView &eq_mult)
 {
     MatRealView *RSQrq_hat_curr_p;
+    // This stabilized path has no per-stage equality transform that refreshes
+    // its working Hessian stripes. Initialize them once so eliminating the
+    // controls of stage k can update the stripe consumed at stage k-1.
+    for (Index stage = 0; stage < info.dims.K; ++stage)
+    {
+        const Index local = info.dims.number_of_controls[stage]
+                          + info.dims.number_of_states[stage];
+        gecp(local + 1, local, hessian.RSQrqt[stage], 0, 0,
+             RSQrqt_underbar[stage], 0, 0);
+        if (stage + 1 < info.dims.K)
+        {
+            const Index next_states =
+                info.dims.number_of_states[stage + 1];
+            gecp(local, next_states, hessian.FuFx[stage], 0, 0,
+                 FuFx_underbar[stage], 0, 0);
+        }
+    }
     for (Index k = info.dims.K - 1; k >= 0; --k)
     {
         const Index nu = info.dims.number_of_controls[k];
@@ -4064,8 +4767,8 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve(const ProblemInfo &info,
         //////// SUBSDYN
         if (k == info.dims.K - 1)
         {
-            rowin(nu + nx, 1.0, f, offset_u, hessian.RSQrqt[k], nu + nx, 0);
-            gecp(nx + nu + 1, nu + nx, hessian.RSQrqt[k], 0, 0, RSQrqt_tilde[k], 0, 0);
+            rowin(nu + nx, 1.0, f, offset_u, RSQrqt_underbar[k], nu + nx, 0);
+            gecp(nx + nu + 1, nu + nx, RSQrqt_underbar[k], 0, 0, RSQrqt_tilde[k], 0, 0);
         }
         else
         {
@@ -4078,9 +4781,9 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve(const ProblemInfo &info,
             // AL[-1,:] <- AL[-1,:] + p_kp1^T
             gead(1, nxp1, 1.0, Ppt[k + 1], nxp1, 0, AL[0], nx + nu, 0);
             // RSQrqt_stripe <- AL[BA] + RSQrqt
-            rowin(nu + nx, 1.0, f, offset_u, hessian.RSQrqt[k], nu + nx, 0);
+            rowin(nu + nx, 1.0, f, offset_u, RSQrqt_underbar[k], nu + nx, 0);
             syrk_ln_mn(nu + nx + 1, nu + nx, nxp1, 1.0, AL[0], 0, 0, jacobian.BAbt[k], 0, 0, 1.0,
-                       hessian.RSQrqt[k], 0, 0, RSQrqt_tilde[k], 0, 0);
+                       RSQrqt_underbar[k], 0, 0, RSQrqt_tilde[k], 0, 0);
 
             // Add second order dynamics contribution                
             gemm_nt(nu + nx + 1, nu + nx, nxp1, 1.0, jacobian.BAbt[k], 0, 0, FuFx_underbar[k], 0, 0, 1.0,
@@ -4284,6 +4987,12 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve_rhs(const ProblemInfo &info,
             axpy(nxp1, 1.0, v_Ppt[k + 1], 0, v_AL[0], 0, v_AL[0], 0);
             gemv_n(nu + nx, nxp1, 1.0, jacobian.BAbt[k], 0, 0, v_AL[0], 0, 1.0, f, offs,
                    v_RSQrqt_tilde[k], 0);
+            // For a retained factorization, the affine dynamics RHS is new.
+            // Substitution into z[k]^T FuFx[k] x[k+1] adds FuFx[k] g[k]
+            // to the current linear term.
+            gemv_n(nu + nx, nxp1, 1.0, FuFx_underbar[k], 0, 0,
+                   g, offs_dyn_k, 1.0, v_RSQrqt_tilde[k], 0,
+                   v_RSQrqt_tilde[k], 0);
             if (gamma_k > 0)
             {
                 if (ng > 0)
@@ -4477,6 +5186,9 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve_rhs(const ProblemInfo &info,
                    offs_dyn_k);
             gemv_t(gammamrho_kp1, nxp1, 1.0, Hh[k + 1], 0, 0, eq_mult, offs_g_kp1, 1.0, eq_mult,
                    offs_dyn_k, eq_mult, offs_dyn_k);
+            gemv_t(nu + nx, nxp1, 1.0, FuFx_underbar[k], 0, 0,
+                   x, offs, 1.0, eq_mult, offs_dyn_k, eq_mult,
+                   offs_dyn_k);
         }
     }
     return LinsolReturnFlag::SUCCESS;
@@ -4510,6 +5222,9 @@ LinsolReturnFlag ModifiedAugSystemSolver::solve_rhs(const ProblemInfo &info,
             gemv_n(nxp1, nxp1, 1.0, Ppt[k + 1], 0, 0, g, offs_g_dyn, 0.0, v_AL[0], 0, v_AL[0], 0);
             axpy(nxp1, 1.0, v_Ppt[k + 1], 0, v_AL[0], 0, v_AL[0], 0);
             gemv_n(nu + nx, nxp1, 1.0, jacobian.BAbt[k], 0, 0, v_AL[0], 0, 1.0, f, offs_ux_k,
+                   v_RSQrqt_tilde[k], 0);
+            gemv_n(nu + nx, nxp1, 1.0, FuFx_underbar[k], 0, 0,
+                   g, offs_g_dyn, 1.0, v_RSQrqt_tilde[k], 0,
                    v_RSQrqt_tilde[k], 0);
         }
         if (ng > 0)
@@ -4864,7 +5579,10 @@ void VerifyIntermediateSolution(const ProblemInfo &info,
 
 
 
-AugSystemSolver<ImplicitOcpType>::AugSystemSolver(const ProblemInfo &info) : ModifiedAugSystemSolver(info)
+AugSystemSolver<ImplicitOcpType>::AugSystemSolver(const ProblemInfo &info)
+    : ModifiedAugSystemSolver(info),
+      identity_dynamics_solver_(
+          std::make_unique<AugSystemSolver<OcpType>>(info))
 {
     // Initialize additional members specific to ImplicitOcpType if needed
     int max_nx = *std::max_element(info.dims.number_of_states.begin(), info.dims.number_of_states.end());
@@ -4878,17 +5596,352 @@ AugSystemSolver<ImplicitOcpType>::AugSystemSolver(const ProblemInfo &info) : Mod
     
     f_copy.emplace_back(info.number_of_primal_variables);
     g_copy.emplace_back(info.number_of_eq_constraints);
+    g_original_copy.emplace_back(info.number_of_eq_constraints);
     D_x_copy.emplace_back(info.number_of_primal_variables);
     D_s_copy.emplace_back(info.number_of_slack_variables);
-    D_eq_copy.emplace_back(info.number_of_eq_constraints);
+    D_eq_copy.emplace_back(info.number_of_g_eq_path);
     x_copy.emplace_back(info.number_of_primal_variables);
     eq_mult_copy.emplace_back(info.number_of_eq_constraints + info.number_of_slack_variables);
+    batch_primal.emplace_back(info.number_of_primal_variables);
+    batch_multipliers.emplace_back(info.number_of_eq_constraints);
 
     int dim = std::max(max_nu + max_nx + 1, max_ng);
-    scratch = std::make_unique<MatRealAllocated>(dim + 8, dim);
+    // Implicit Hessian cross blocks reserve eight extra columns for the
+    // rank-aware state-to-input transformation.  TreatStatesAsInputs copies
+    // the allocated row stripe, including that capacity, so the scratch
+    // matrix must carry the same column padding as well as row padding.
+    scratch = std::make_unique<MatRealAllocated>(dim + 8, dim + 8);
     JBAbt.emplace_back(dim + max_nx, max_nx);
     JBAbt_modified.emplace_back(dim + max_nx, max_nx);
 };
+
+bool AugSystemSolver<ImplicitOcpType>::CanUseIdentityDynamicsFastPath(
+    const ProblemInfo &info,
+    const Jacobian<ImplicitOcpType> &jacobian,
+    const Hessian<ImplicitOcpType> &hessian) const
+{
+    for (Index stage = 0; stage + 1 < info.dims.K; ++stage)
+    {
+        const Index local = info.dims.number_of_controls[stage]
+                          + info.dims.number_of_states[stage];
+        const Index next_states =
+            info.dims.number_of_states[stage + 1];
+        const Index next_controls =
+            info.dims.number_of_controls[stage + 1];
+        for (Index row = 0; row < next_states; ++row)
+        for (Index column = 0; column < next_states; ++column)
+        {
+            const Scalar expected = row == column ? -1.0 : 0.0;
+            if (jacobian.Jt[stage](row, column) != expected)
+                return false;
+        }
+        for (Index row = 0; row < local; ++row)
+        {
+            for (Index column = 0; column < next_states; ++column)
+                if (hessian.FuFx[stage](row, column) != 0.0)
+                    return false;
+            for (Index column = 0; column < next_controls; ++column)
+                if (hessian.GuGx[stage](row, column) != 0.0)
+                    return false;
+        }
+    }
+    return true;
+}
+
+void AugSystemSolver<ImplicitOcpType>::MarkFullRankIdentityDynamics(
+    const ProblemInfo &info,
+    Jacobian<ImplicitOcpType> &jacobian) const
+{
+    for (Index stage = 0; stage + 1 < info.dims.K; ++stage)
+    {
+        jacobian.J_ranks[stage] =
+            info.dims.number_of_states[stage + 1];
+        jacobian.nb_new_controls[stage] = 0;
+    }
+}
+
+namespace
+{
+bool CanUseNormalizedExplicitFastPath(
+    const ProblemInfo &original_info,
+    const ProblemInfo &modified_info,
+    const Jacobian<ImplicitOcpType> &jacobian,
+    const Hessian<ImplicitOcpType> &hessian)
+{
+    if (original_info.number_of_primal_variables
+        != modified_info.number_of_primal_variables)
+        return false;
+    for (Index stage = 0; stage + 1 < original_info.dims.K; ++stage)
+    {
+        if (jacobian.J_ranks[stage]
+            != original_info.dims.number_of_states[stage + 1])
+            return false;
+        const Index local = modified_info.dims.number_of_controls[stage]
+                          + modified_info.dims.number_of_states[stage];
+        const Index next_states =
+            modified_info.dims.number_of_states[stage + 1];
+        const Index next_controls =
+            modified_info.dims.number_of_controls[stage + 1];
+        for (Index row = 0; row < local; ++row)
+        {
+            for (Index column = 0; column < next_states; ++column)
+                if (hessian.FuFx[stage](row, column) != 0.)
+                    return false;
+            for (Index column = 0; column < next_controls; ++column)
+                if (hessian.GuGx[stage](row, column) != 0.)
+                    return false;
+        }
+    }
+    return true;
+}
+
+bool HasRankDeficientDynamics(
+    const ProblemInfo &info,
+    const Jacobian<ImplicitOcpType> &jacobian)
+{
+    for (Index stage = 0; stage + 1 < info.dims.K; ++stage)
+        if (jacobian.J_ranks[stage]
+            < info.dims.number_of_states[stage + 1])
+            return true;
+    return false;
+}
+
+bool HasAdjacentCurvature(
+    const ProblemInfo &info,
+    const Hessian<ImplicitOcpType> &hessian)
+{
+    bool adjacent_curvature = false;
+    for (Index stage = 0; stage + 1 < info.dims.K; ++stage)
+    {
+        const Index local = info.dims.number_of_controls[stage]
+                          + info.dims.number_of_states[stage];
+        const Index next_states = info.dims.number_of_states[stage + 1];
+        const Index next_controls = info.dims.number_of_controls[stage + 1];
+        for (Index row = 0; row < local; ++row)
+        {
+            for (Index column = 0; column < next_states; ++column)
+                adjacent_curvature = adjacent_curvature
+                    || hessian.FuFx[stage](row, column) != 0.0;
+            for (Index column = 0; column < next_controls; ++column)
+                adjacent_curvature = adjacent_curvature
+                    || hessian.GuGx[stage](row, column) != 0.0;
+        }
+    }
+    return adjacent_curvature;
+}
+
+bool NeedsRankDeficientAdjacentCurvatureRefactor(
+    const ProblemInfo &info,
+    const Jacobian<ImplicitOcpType> &jacobian,
+    const Hessian<ImplicitOcpType> &hessian)
+{
+    return HasRankDeficientDynamics(info, jacobian)
+        && HasAdjacentCurvature(info, hessian);
+}
+
+ProblemInfo MakeNormalizedExplicitInfo(
+    const ProblemInfo &modified_info, const bool stabilized)
+{
+    std::vector<Index> equalities = stabilized
+        ? std::vector<Index>(modified_info.dims.K, 0)
+        : modified_info.dims.number_of_eq_constraints;
+    std::vector<Index> inequalities(modified_info.dims.K, 0);
+    return ProblemInfo(ProblemDims(
+        modified_info.dims.K,
+        modified_info.dims.number_of_controls,
+        modified_info.dims.number_of_states,
+        equalities, inequalities, 0,
+        modified_info.dims.number_of_stage_border_variables));
+}
+
+void PackNormalizedExplicitConstraintRhs(
+    const ProblemInfo &modified_info,
+    const ProblemInfo &normalized_info,
+    const bool stabilized,
+    const VecRealView &source,
+    VecRealView &destination)
+{
+    destination = 0.;
+    for (Index stage = 0; stage < modified_info.dims.K; ++stage)
+    {
+        if (!stabilized)
+        {
+            const Index equalities =
+                modified_info.dims.number_of_eq_constraints[stage];
+            veccp(
+                equalities, source,
+                modified_info.offsets_g_eq_path[stage],
+                destination,
+                normalized_info.offsets_g_eq_path[stage]);
+        }
+        if (stage + 1 < modified_info.dims.K)
+        {
+            const Index dynamics =
+                modified_info.dims.number_of_states[stage + 1];
+            veccp(
+                dynamics, source,
+                modified_info.offsets_g_eq_dyn[stage],
+                destination,
+                normalized_info.offsets_g_eq_dyn[stage]);
+        }
+    }
+}
+
+void UnpackNormalizedExplicitMultipliers(
+    const ProblemInfo &modified_info,
+    const ProblemInfo &normalized_info,
+    const bool stabilized,
+    const VecRealView &source,
+    VecRealView &destination)
+{
+    destination = 0.;
+    for (Index stage = 0; stage < modified_info.dims.K; ++stage)
+    {
+        if (!stabilized)
+        {
+            const Index equalities =
+                modified_info.dims.number_of_eq_constraints[stage];
+            veccp(
+                equalities, source,
+                normalized_info.offsets_g_eq_path[stage],
+                destination,
+                modified_info.offsets_g_eq_path[stage]);
+        }
+        if (stage + 1 < modified_info.dims.K)
+        {
+            const Index dynamics =
+                modified_info.dims.number_of_states[stage + 1];
+            veccp(
+                dynamics, source,
+                normalized_info.offsets_g_eq_dyn[stage],
+                destination,
+                modified_info.offsets_g_eq_dyn[stage]);
+        }
+    }
+}
+} // namespace
+
+void AugSystemSolver<ImplicitOcpType>::register_options(
+    OptionRegistry &registry)
+{
+    registry.register_option(
+        "linsol_it_ref",
+        &AugSystemSolver<ImplicitOcpType>::set_it_ref, this);
+    registry.register_option(
+        "linsol_perturbed_mode",
+        &AugSystemSolver<ImplicitOcpType>::set_perturbed_mode, this);
+    registry.register_option(
+        "linsol_perturbed_mode_param",
+        &AugSystemSolver<ImplicitOcpType>::set_perturbed_mode_param, this);
+    registry.register_option(
+        "linsol_lu_fact_tol",
+        &AugSystemSolver<ImplicitOcpType>::set_lu_fact_tol, this);
+    registry.register_option(
+        "linsol_diagnostic",
+        &AugSystemSolver<ImplicitOcpType>::set_diagnostic, this);
+    registry.register_option(
+        "linsol_increased_accuracy",
+        &AugSystemSolver<ImplicitOcpType>::set_increased_accuracy, this);
+}
+
+LinsolReturnFlag
+AugSystemSolver<ImplicitOcpType>::SolveStabilizedRankDeficient(
+    const ProblemInfo &original_info,
+    const ProblemInfo &modified_info,
+    Jacobian<ImplicitOcpType> &jacobian,
+    Hessian<ImplicitOcpType> &hessian,
+    const VecRealView &D_x,
+    const VecRealView &D_s,
+    const VecRealView &f,
+    const VecRealView &g,
+    VecRealView &x,
+    VecRealView &eq_mult)
+{
+    // PreProcess has already eliminated the regularized original path
+    // multipliers into H and f. Rank-deficient dynamics additionally created
+    // hard path rows. Solve only those promoted rows as equalities; treating
+    // them with D_eq would change the original KKT system.
+    std::vector<Index> hard_equalities(
+        static_cast<std::size_t>(modified_info.dims.K), 0);
+    for (Index stage = 0; stage + 1 < modified_info.dims.K; ++stage)
+        hard_equalities[stage] = jacobian.nb_new_controls[stage];
+
+    const ProblemDims hard_dims(
+        modified_info.dims.K,
+        modified_info.dims.number_of_controls,
+        modified_info.dims.number_of_states,
+        hard_equalities,
+        modified_info.dims.number_of_ineq_constraints);
+    const ProblemInfo hard_info(hard_dims);
+    VecRealAllocated hard_g(hard_info.number_of_eq_constraints);
+    VecRealAllocated hard_multipliers(hard_info.number_of_eq_constraints);
+    hard_g = 0.0;
+    hard_multipliers = 0.0;
+
+    for (Index stage = 0; stage < hard_info.dims.K; ++stage)
+    {
+        const Index local = hard_info.dims.number_of_controls[stage]
+                          + hard_info.dims.number_of_states[stage];
+        const Index original_equalities =
+            original_info.dims.number_of_eq_constraints[stage];
+        const Index hard_count = hard_equalities[stage];
+        if (hard_count > 0)
+        {
+            // Columns are [original regularized rows, promoted hard rows].
+            // Move only the latter to the front for the hard-only view.
+            gecp(local + 1, hard_count, jacobian.Gg_eqt[stage],
+                 0, original_equalities, *scratch, 0, 0);
+            gecp(local + 1, hard_count, *scratch, 0, 0,
+                 jacobian.Gg_eqt[stage], 0, 0);
+            veccp(hard_count, g,
+                  modified_info.offsets_g_eq_path[stage]
+                      + original_equalities,
+                  hard_g, hard_info.offsets_g_eq_path[stage]);
+        }
+
+        if (stage + 1 < hard_info.dims.K)
+        {
+            const Index dynamics = hard_info.dims.number_of_states[stage + 1];
+            veccp(dynamics, g, modified_info.offsets_g_eq_dyn[stage],
+                  hard_g, hard_info.offsets_g_eq_dyn[stage]);
+        }
+        const Index inequalities =
+            hard_info.dims.number_of_ineq_constraints[stage];
+        veccp(inequalities, g, modified_info.offsets_g_eq_slack[stage],
+              hard_g, hard_info.offsets_g_eq_slack[stage]);
+    }
+
+    const LinsolReturnFlag status = ModifiedAugSystemSolver::solve(
+        hard_info, jacobian, hessian, D_x, D_s, f, hard_g,
+        x, hard_multipliers);
+    if (status != LinsolReturnFlag::SUCCESS)
+        return status;
+
+    eq_mult = 0.0;
+    for (Index stage = 0; stage < hard_info.dims.K; ++stage)
+    {
+        const Index original_equalities =
+            original_info.dims.number_of_eq_constraints[stage];
+        const Index hard_count = hard_equalities[stage];
+        veccp(hard_count, hard_multipliers,
+              hard_info.offsets_g_eq_path[stage], eq_mult,
+              modified_info.offsets_g_eq_path[stage]
+                  + original_equalities);
+        if (stage + 1 < hard_info.dims.K)
+        {
+            const Index dynamics = hard_info.dims.number_of_states[stage + 1];
+            veccp(dynamics, hard_multipliers,
+                  hard_info.offsets_g_eq_dyn[stage], eq_mult,
+                  modified_info.offsets_g_eq_dyn[stage]);
+        }
+        const Index inequalities =
+            hard_info.dims.number_of_ineq_constraints[stage];
+        veccp(inequalities, hard_multipliers,
+              hard_info.offsets_g_eq_slack[stage], eq_mult,
+              modified_info.offsets_g_eq_slack[stage]);
+    }
+    return status;
+}
 
 LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info,
                                            Jacobian<ImplicitOcpType> &jacobian, Hessian<ImplicitOcpType> &hessian,
@@ -4896,6 +5949,20 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info
                                            const VecRealView &f, const VecRealView &g,
                                            VecRealView &x, VecRealView &eq_mult)
 {
+    identity_factorization_ready_ = false;
+    normalized_explicit_factorization_ready_ = false;
+    normalized_explicit_stabilized_ = false;
+    if (CanUseIdentityDynamicsFastPath(info, jacobian, hessian))
+    {
+        MarkFullRankIdentityDynamics(info, jacobian);
+        const LinsolReturnFlag status = identity_dynamics_solver_->solve(
+            info, static_cast<Jacobian<OcpType> &>(jacobian),
+            static_cast<Hessian<OcpType> &>(hessian),
+            D_x, D_s, f, g, x, eq_mult);
+        identity_factorization_ready_ =
+            status == LinsolReturnFlag::SUCCESS;
+        return status;
+    }
     if (print_debug) {std::cout << "AugSystemSolver<ImplicitOcpType> solve start" << std::endl;}
     // copy the rhs since they are altered during preprocessing and are needed for checking the solution
     auto start = std::chrono::high_resolution_clock::now();
@@ -4917,7 +5984,41 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info
     duration_preprocess = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
 
     start = std::chrono::high_resolution_clock::now();
-    LinsolReturnFlag flag = ModifiedAugSystemSolver::solve(modified_info, jacobian, hessian, D_x_copy[0], D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult);
+    LinsolReturnFlag flag;
+    if (CanUseNormalizedExplicitFastPath(
+            info, modified_info, jacobian, hessian))
+    {
+        const ProblemInfo normalized_info =
+            MakeNormalizedExplicitInfo(modified_info, false);
+        VecRealView normalized_g(
+            g_original_copy[0],
+            normalized_info.number_of_eq_constraints, 0);
+        VecRealView normalized_multipliers(
+            batch_multipliers[0],
+            normalized_info.number_of_eq_constraints, 0);
+        PackNormalizedExplicitConstraintRhs(
+            modified_info, normalized_info, false,
+            g_copy[0], normalized_g);
+        D_x_copy[0] = 0.;
+        normalized_multipliers = 0.;
+        flag = identity_dynamics_solver_->solve(
+            normalized_info,
+            static_cast<Jacobian<OcpType> &>(jacobian),
+            static_cast<Hessian<OcpType> &>(hessian),
+            D_x_copy[0], D_s_copy[0], f_copy[0], normalized_g,
+            x, normalized_multipliers);
+        UnpackNormalizedExplicitMultipliers(
+            modified_info, normalized_info, false,
+            normalized_multipliers, eq_mult);
+        normalized_explicit_factorization_ready_ =
+            flag == LinsolReturnFlag::SUCCESS;
+    }
+    else
+    {
+        flag = ModifiedAugSystemSolver::solve(
+            modified_info, jacobian, hessian, D_x_copy[0],
+            D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult);
+    }
     auto end = std::chrono::high_resolution_clock::now();
     duration_solve = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
 
@@ -4977,6 +6078,20 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info
                                            const VecRealView &g, VecRealView &x,
                                            VecRealView &eq_mult)
 {
+    identity_factorization_ready_ = false;
+    normalized_explicit_factorization_ready_ = false;
+    normalized_explicit_stabilized_ = false;
+    if (CanUseIdentityDynamicsFastPath(info, jacobian, hessian))
+    {
+        MarkFullRankIdentityDynamics(info, jacobian);
+        const LinsolReturnFlag status = identity_dynamics_solver_->solve(
+            info, static_cast<Jacobian<OcpType> &>(jacobian),
+            static_cast<Hessian<OcpType> &>(hessian),
+            D_x, D_eq, D_s, f, g, x, eq_mult);
+        identity_factorization_ready_ =
+            status == LinsolReturnFlag::SUCCESS;
+        return status;
+    }
     if (print_debug) {std::cout << "AugSystemSolver<ImplicitOcpType> solve start" << std::endl;}
     // copy the rhs since they are altered during preprocessing and are needed for checking the solution
     #ifdef PROFILE
@@ -4985,7 +6100,7 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info
     veccp(info.number_of_primal_variables, f, 0, f_copy[0], 0);
     veccp(info.number_of_eq_constraints, g, 0, g_copy[0], 0);
     veccp(info.number_of_primal_variables, D_x, 0, D_x_copy[0], 0);
-    veccp(info.number_of_eq_constraints, D_eq, 0, D_eq_copy[0], 0);
+    veccp(info.number_of_g_eq_path, D_eq, 0, D_eq_copy[0], 0);
     veccp(info.number_of_slack_variables, D_s, 0, D_s_copy[0], 0);
 
     #ifdef PROFILE
@@ -4998,7 +6113,22 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve(const ProblemInfo &info
     #ifdef PROFILE
     start = std::chrono::high_resolution_clock::now();
     #endif
-    LinsolReturnFlag flag = ModifiedAugSystemSolver::solve(modified_info, jacobian, hessian, D_x_copy[0], D_eq_copy[0], D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult);
+    // Path-equality regularization is condensed by the implicit
+    // preprocessing and changes the inertia seen by the Riccati recursion.
+    // Removing those rows from a normalized explicit view is therefore not
+    // equivalent to the stabilized modified recursion.  Keep this case on
+    // the verified implementation; only the unstabilized full-rank system
+    // may use the normalized-explicit fast path.
+    const bool rank_deficient =
+        HasRankDeficientDynamics(info, jacobian);
+    LinsolReturnFlag flag = rank_deficient
+        ? SolveStabilizedRankDeficient(
+            info, modified_info, jacobian, hessian, D_x_copy[0],
+            D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult)
+        : ModifiedAugSystemSolver::solve(
+            modified_info, jacobian, hessian, D_x_copy[0],
+            D_eq_copy[0], D_s_copy[0], f_copy[0], g_copy[0],
+            x, eq_mult);
     #ifdef PROFILE
     auto end = std::chrono::high_resolution_clock::now();
     duration_solve = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
@@ -5015,6 +6145,48 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs(const ProblemInfo &
                                                const VecRealView &g, VecRealView &x,
                                                VecRealView &eq_mult)
 {
+    if (identity_factorization_ready_)
+        return identity_dynamics_solver_->solve_rhs(
+            info, static_cast<const Jacobian<OcpType> &>(jacobian),
+            static_cast<const Hessian<OcpType> &>(hessian),
+            D_s, f, g, x, eq_mult);
+    if (normalized_explicit_factorization_ready_)
+    {
+        fatrop_assert_msg(
+            !normalized_explicit_stabilized_,
+            "An unstabilized RHS cannot reuse a stabilized normalized factorization.");
+        veccp(info.number_of_primal_variables, f, 0, f_copy[0], 0);
+        veccp(info.number_of_eq_constraints, g, 0, g_copy[0], 0);
+        veccp(info.number_of_slack_variables, D_s, 0, D_s_copy[0], 0);
+        const ProblemInfo modified_info = PreProcess(
+            info, jacobian, hessian, f_copy[0], g_copy[0],
+            nullptr, nullptr, &D_s_copy[0]);
+        const ProblemInfo normalized_info =
+            MakeNormalizedExplicitInfo(modified_info, false);
+        VecRealView normalized_g(
+            g_original_copy[0], normalized_info.number_of_eq_constraints, 0);
+        VecRealView normalized_multipliers(
+            batch_multipliers[0], normalized_info.number_of_eq_constraints, 0);
+        PackNormalizedExplicitConstraintRhs(
+            modified_info, normalized_info, false, g_copy[0], normalized_g);
+        normalized_multipliers = 0.;
+        const LinsolReturnFlag flag = identity_dynamics_solver_->solve_rhs(
+            normalized_info,
+            static_cast<const Jacobian<OcpType> &>(jacobian),
+            static_cast<const Hessian<OcpType> &>(hessian),
+            D_s_copy[0], f_copy[0], normalized_g, x,
+            normalized_multipliers);
+        UnpackNormalizedExplicitMultipliers(
+            modified_info, normalized_info, false,
+            normalized_multipliers, eq_mult);
+        PostProcess(
+            info, modified_info, jacobian, hessian, x, eq_mult,
+            &D_s, nullptr, g);
+        return flag;
+    }
+    const bool refactor_rank_deficient_curvature =
+        NeedsRankDeficientAdjacentCurvatureRefactor(
+            info, jacobian, hessian);
     #ifdef PROFILE
     auto start = std::chrono::high_resolution_clock::now();
     #endif
@@ -5027,11 +6199,25 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs(const ProblemInfo &
     #endif
 
     // return LinsolReturnFlag::SUCCESS;
-    ProblemInfo modified_info = PreProcess(info, jacobian, hessian, f_copy[0], g_copy[0], nullptr, nullptr, &D_s_copy[0]);
+    ProblemInfo modified_info = PreProcess(
+        info, jacobian, hessian, f_copy[0], g_copy[0],
+        refactor_rank_deficient_curvature ? &D_x_copy[0] : nullptr,
+        nullptr, &D_s_copy[0]);
     #ifdef PROFILE
     start = std::chrono::high_resolution_clock::now();
     #endif
-    LinsolReturnFlag flag = ModifiedAugSystemSolver::solve_rhs(modified_info, jacobian, hessian, D_s, f_copy[0], g_copy[0], x, eq_mult);
+    // Rank-deficient preprocessing promotes null-space states to controls,
+    // which creates GuGx coupling.  Its retained-RHS back-substitution does
+    // not yet cache both triangular GuGx response forms.  Refactor through
+    // the same O(N) structured recursion for correctness in that corner;
+    // full-rank exact-curvature systems retain factor reuse.
+    LinsolReturnFlag flag = refactor_rank_deficient_curvature
+        ? ModifiedAugSystemSolver::solve(
+            modified_info, jacobian, hessian, D_x_copy[0],
+            D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult)
+        : ModifiedAugSystemSolver::solve_rhs(
+            modified_info, jacobian, hessian, D_s_copy[0],
+            f_copy[0], g_copy[0], x, eq_mult);
     #ifdef PROFILE
     auto end = std::chrono::high_resolution_clock::now();
     duration_solve = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
@@ -5046,12 +6232,28 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs(const ProblemInfo &
                                                const VecRealView &f, const VecRealView &g,
                                                VecRealView &x, VecRealView &eq_mult)
 {
+    if (identity_factorization_ready_)
+        return identity_dynamics_solver_->solve_rhs(
+            info, static_cast<const Jacobian<OcpType> &>(jacobian),
+            static_cast<const Hessian<OcpType> &>(hessian),
+            D_eq, D_s, f, g, x, eq_mult);
+    fatrop_assert_msg(
+        !normalized_explicit_factorization_ready_,
+        "A stabilized RHS cannot reuse an unstabilized normalized factorization.");
+    const bool rank_deficient =
+        HasRankDeficientDynamics(info, jacobian);
+    const bool adjacent_curvature = HasAdjacentCurvature(info, hessian);
+    // Promoted null-space dynamics rows are hard equalities, whereas D_eq
+    // regularizes only the original path rows. Exact adjacent curvature also
+    // needs the factor-and-solve multiplier back-substitution. Both cases use
+    // a fresh O(N) structured factorization for a retained RHS.
+    const bool refactor = rank_deficient || adjacent_curvature;
     #ifdef PROFILE
     auto start = std::chrono::high_resolution_clock::now();
     #endif
     veccp(info.number_of_primal_variables, f, 0, f_copy[0], 0);
     veccp(info.number_of_eq_constraints, g, 0, g_copy[0], 0);
-    veccp(info.number_of_eq_constraints, D_eq, 0, D_eq_copy[0], 0);
+    veccp(info.number_of_g_eq_path, D_eq, 0, D_eq_copy[0], 0);
     veccp(info.number_of_slack_variables, D_s, 0, D_s_copy[0], 0);
 
     #ifdef PROFILE
@@ -5060,17 +6262,465 @@ LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs(const ProblemInfo &
     #endif
 
     // return LinsolReturnFlag::SUCCESS;
-    ProblemInfo modified_info = PreProcess(info, jacobian, hessian, f_copy[0], g_copy[0], nullptr, &D_eq_copy[0], &D_s_copy[0]);
+    ProblemInfo modified_info = PreProcess(
+        info, jacobian, hessian, f_copy[0], g_copy[0],
+        refactor ? &D_x_copy[0] : nullptr,
+        &D_eq_copy[0], &D_s_copy[0]);
+
+    // PreProcess has already condensed the regularized path-equality and
+    // inequality rows into the primal right-hand side.  The reused-RHS
+    // recursion normally performs that condensation itself; leaving these
+    // entries in g_copy therefore adds A^T D^-1 g a second time (and, for
+    // equalities, uses the already scaled Jacobian once more).  Keep dynamics
+    // residuals intact, but suppress the local rows that were condensed
+    // above.  PostProcess receives the original g and reconstructs their
+    // multipliers from A x + g.
+    for (Index k = 0; k < info.dims.K; ++k)
+    {
+        vecse(
+            info.dims.number_of_eq_constraints[k], 0.0,
+            g_copy[0], modified_info.offsets_g_eq_path[k]);
+        vecse(
+            info.dims.number_of_ineq_constraints[k], 0.0,
+            g_copy[0], modified_info.offsets_g_eq_slack[k]);
+    }
     #ifdef PROFILE
     start = std::chrono::high_resolution_clock::now();
     #endif
-    LinsolReturnFlag flag = ModifiedAugSystemSolver::solve_rhs(modified_info, jacobian, hessian, D_eq_copy[0], D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult);
+    LinsolReturnFlag flag = rank_deficient
+        ? SolveStabilizedRankDeficient(
+            info, modified_info, jacobian, hessian, D_x_copy[0],
+            D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult)
+        : adjacent_curvature
+        ? ModifiedAugSystemSolver::solve(
+            modified_info, jacobian, hessian, D_x_copy[0],
+            D_eq_copy[0], D_s_copy[0], f_copy[0], g_copy[0],
+            x, eq_mult)
+        : ModifiedAugSystemSolver::solve_rhs(
+            modified_info, jacobian, hessian, D_eq_copy[0],
+            D_s_copy[0], f_copy[0], g_copy[0], x, eq_mult);
     #ifdef PROFILE
     auto end = std::chrono::high_resolution_clock::now();
     duration_solve = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     #endif
     PostProcess(info, modified_info, jacobian, hessian, x, eq_mult, &D_s, &D_eq, g);
     return flag;
+}
+
+void AugSystemSolver<ImplicitOcpType>::PrepareFullRankRhs(
+    const ProblemInfo &info,
+    Jacobian<ImplicitOcpType> &jacobian,
+    const VecRealView *D_eq,
+    const VecRealView &D_s,
+    const MatRealView &f,
+    const MatRealView &g,
+    const Index column)
+{
+    for (Index row = 0; row < info.number_of_primal_variables; ++row)
+        f_copy[0](row) = f(row, column);
+    for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+    {
+        const Scalar value = g(row, column);
+        g_copy[0](row) = value;
+        g_original_copy[0](row) = value;
+    }
+
+    // Eliminate the regularized local duals in the original coordinates:
+    //
+    //   [ H  A^T ] [dx] = -[f]
+    //   [ A  -D  ] [dl]   [g]
+    //
+    // gives (H + A^T D^-1 A) dx = -(f + A^T D^-1 g).
+    // Coefficient preprocessing has already formed the left-hand side; this
+    // is its right-hand-side counterpart for the current batch column.
+    for (Index k = 0; k < info.dims.K; ++k)
+    {
+        const Index nu = info.dims.number_of_controls[k];
+        const Index nx = info.dims.number_of_states[k];
+        const Index ng = info.dims.number_of_eq_constraints[k];
+        const Index ng_ineq = info.dims.number_of_ineq_constraints[k];
+        const Index primal_offset = info.offsets_primal_u[k];
+        const Index equality_offset = info.offsets_g_eq_path[k];
+        const Index equality_diagonal_offset = info.offsets_eq[k];
+        const Index inequality_offset = info.offsets_g_eq_slack[k];
+        const Index slack_offset = info.offsets_slack[k];
+
+        for (Index variable = 0; variable < nu + nx; ++variable)
+        {
+            Scalar value = f_copy[0](primal_offset + variable);
+            for (Index equation = 0;
+                 D_eq != nullptr && equation < ng; ++equation)
+            {
+                value +=
+                    jacobian.Gg_eqt_original[k](variable, equation)
+                  * g(equality_offset + equation, column)
+                  / (*D_eq)(equality_diagonal_offset + equation);
+            }
+            for (Index equation = 0; equation < ng_ineq; ++equation)
+            {
+                value +=
+                    jacobian.Gg_ineqt_original[k](variable, equation)
+                  * g(inequality_offset + equation, column)
+                  / D_s(slack_offset + equation);
+            }
+            f_copy[0](primal_offset + variable) = value;
+        }
+
+        if (D_eq != nullptr)
+            vecse(ng, 0.0, g_copy[0], equality_offset);
+        vecse(ng_ineq, 0.0, g_copy[0], inequality_offset);
+    }
+
+    for (Index k = 0; k + 1 < info.dims.K; ++k)
+    {
+        const Index nx_next = info.dims.number_of_states[k + 1];
+        const Index dynamics_offset = info.offsets_g_eq_dyn[k];
+
+        // Apply the cached full-pivoted factorization of dF/dx[k+1] to
+        // the dynamics residual, exactly as coefficient PreProcess applies
+        // it to the last row of [J^T; B^T; g^T].
+        for (Index state = 0; state < nx_next; ++state)
+            (*scratch)(0, state) = g(dynamics_offset + state, column);
+        jacobian.Pl_pre[k].apply_on_cols(
+            nx_next, &scratch->mat(), 0, 0, 1);
+        trsm_runu(
+            1, nx_next, 1.0,
+            jacobian.Jt_LU[k], 0, 0,
+            *scratch, 0, 0,
+            *scratch, 0, 0);
+        trsm_rlnn(
+            1, nx_next, -1.0,
+            jacobian.Jt_LU[k], 0, 0,
+            *scratch, 0, 0,
+            *scratch, 0, 0);
+        for (Index state = 0; state < nx_next; ++state)
+            g_copy[0](dynamics_offset + state) = (*scratch)(0, state);
+
+        // The same right permutation is a coordinate permutation of the
+        // next-stage state block.  Controls retain their original order.
+        jacobian.Pr_pre[k].apply(
+            nx_next, &f_copy[0].vec(),
+            info.offsets_primal_x[k + 1]);
+    }
+}
+
+LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs_batch(
+    const ProblemInfo &info,
+    Jacobian<ImplicitOcpType> &jacobian,
+    Hessian<ImplicitOcpType> &hessian,
+    const VecRealView &D_s,
+    const MatRealView &f,
+    const MatRealView &g,
+    MatRealView &x,
+    MatRealView &eq_mult)
+{
+    return SolveFullRankRhsBatch(
+        info, jacobian, hessian, nullptr, D_s,
+        f, g, x, eq_mult);
+}
+
+LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::solve_rhs_batch(
+    const ProblemInfo &info,
+    Jacobian<ImplicitOcpType> &jacobian,
+    Hessian<ImplicitOcpType> &hessian,
+    const VecRealView &D_eq,
+    const VecRealView &D_s,
+    const MatRealView &f,
+    const MatRealView &g,
+    MatRealView &x,
+    MatRealView &eq_mult)
+{
+    return SolveFullRankRhsBatch(
+        info, jacobian, hessian, &D_eq, D_s,
+        f, g, x, eq_mult);
+}
+
+LinsolReturnFlag AugSystemSolver<ImplicitOcpType>::SolveFullRankRhsBatch(
+    const ProblemInfo &info,
+    Jacobian<ImplicitOcpType> &jacobian,
+    Hessian<ImplicitOcpType> &hessian,
+    const VecRealView *D_eq,
+    const VecRealView &D_s,
+    const MatRealView &f,
+    const MatRealView &g,
+    MatRealView &x,
+    MatRealView &eq_mult)
+{
+    fatrop_assert_msg(
+        f.m() == info.number_of_primal_variables
+        && g.m() == info.number_of_eq_constraints
+        && x.m() == info.number_of_primal_variables
+        && eq_mult.m() == info.number_of_eq_constraints
+        && f.n() == g.n()
+        && f.n() == x.n()
+        && f.n() == eq_mult.n(),
+        "The implicit batch right-hand-side dimensions are inconsistent.");
+    fatrop_assert_msg(
+        (!D_eq || D_eq->m() == info.number_of_g_eq_path)
+        && D_s.m() == info.number_of_slack_variables,
+        "The implicit batch regularization dimensions are inconsistent.");
+    if (f.n() == 0)
+        return LinsolReturnFlag::SUCCESS;
+
+    if (identity_factorization_ready_)
+    {
+        if (!D_eq)
+            return identity_dynamics_solver_->solve_rhs_batch(
+                info,
+                static_cast<const Jacobian<OcpType> &>(jacobian),
+                static_cast<const Hessian<OcpType> &>(hessian),
+                D_s, f, g, x, eq_mult);
+
+        for (Index column = 0; column < f.n(); ++column)
+        {
+            for (Index row = 0;
+                 row < info.number_of_primal_variables; ++row)
+                f_copy[0](row) = f(row, column);
+            for (Index row = 0;
+                 row < info.number_of_eq_constraints; ++row)
+                g_copy[0](row) = g(row, column);
+            batch_primal[0] = 0.0;
+            batch_multipliers[0] = 0.0;
+            const LinsolReturnFlag status =
+                identity_dynamics_solver_->solve_rhs(
+                    info,
+                    static_cast<const Jacobian<OcpType> &>(jacobian),
+                    static_cast<const Hessian<OcpType> &>(hessian),
+                    *D_eq, D_s, f_copy[0], g_copy[0],
+                    batch_primal[0], batch_multipliers[0]);
+            if (status != LinsolReturnFlag::SUCCESS)
+                return status;
+            for (Index row = 0;
+                 row < info.number_of_primal_variables; ++row)
+                x(row, column) = batch_primal[0](row);
+            for (Index row = 0;
+                 row < info.number_of_eq_constraints; ++row)
+                eq_mult(row, column) = batch_multipliers[0](row);
+        }
+        return LinsolReturnFlag::SUCCESS;
+    }
+
+    // The base factorization records the ranks and permutations.  The batch
+    // fast path deliberately excludes rank-deficient transitions: their
+    // moved-state/moved-equation RHS map is more general and remains on the
+    // independently verified scalar path.
+    for (Index k = 0; k + 1 < info.dims.K; ++k)
+    {
+        if (jacobian.J_ranks[k]
+            != info.dims.number_of_states[k + 1])
+            return LinsolReturnFlag::NOFULL_RANK;
+    }
+
+    for (Index row = 0; row < info.number_of_primal_variables; ++row)
+        f_copy[0](row) = f(row, 0);
+    for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+        g_copy[0](row) = g(row, 0);
+    if (D_eq)
+        veccp(
+            info.number_of_g_eq_path, *D_eq, 0,
+            D_eq_copy[0], 0);
+    veccp(info.number_of_slack_variables, D_s, 0, D_s_copy[0], 0);
+
+    const auto reset = [&]()
+    {
+        jacobian.ResetPreProcess(info);
+        hessian.ResetPreProcess(info, jacobian);
+    };
+
+    try
+    {
+        // Recreate the preprocessed coefficient view once.  The Riccati
+        // factors themselves are retained from the preceding base solve.
+        // Keep preprocessing inside the cleanup scope because it modifies
+        // the Jacobian and Hessian incrementally and may throw midway.
+        const ProblemInfo modified_info = PreProcess(
+            info, jacobian, hessian,
+            f_copy[0], g_copy[0],
+            nullptr, D_eq ? &D_eq_copy[0] : nullptr,
+            &D_s_copy[0]);
+
+        if (normalized_explicit_factorization_ready_)
+        {
+            fatrop_assert_msg(
+                D_eq == nullptr && !normalized_explicit_stabilized_,
+                "Only an unstabilized normalized-explicit factorization "
+                "can serve the implicit batch fast path.");
+            const ProblemInfo normalized_info =
+                MakeNormalizedExplicitInfo(modified_info, false);
+            VecRealView packed_g(
+                g_original_copy[0],
+                normalized_info.number_of_eq_constraints, 0);
+
+            // A blocked traversal allocates and initializes matrix-valued
+            // stage workspaces.  For one to three columns that setup costs
+            // more than reusing the scalar explicit factors, while the
+            // implicit coefficient preprocessing can still be shared by all
+            // columns.  Switch to GEMM-oriented traversal once the border is
+            // wide enough to amortize its workspace.
+            constexpr Index blocked_rhs_threshold = 4;
+            if (f.n() < blocked_rhs_threshold)
+            {
+                VecRealView normalized_multipliers(
+                    g_copy[0],
+                    normalized_info.number_of_eq_constraints, 0);
+                for (Index column = 0; column < f.n(); ++column)
+                {
+                    PrepareFullRankRhs(
+                        info, jacobian, nullptr, D_s,
+                        f, g, column);
+                    PackNormalizedExplicitConstraintRhs(
+                        modified_info, normalized_info, false,
+                        g_copy[0], packed_g);
+                    batch_primal[0] = 0.;
+                    normalized_multipliers = 0.;
+                    const LinsolReturnFlag status =
+                        identity_dynamics_solver_->solve_rhs(
+                            normalized_info,
+                            static_cast<const Jacobian<OcpType> &>(jacobian),
+                            static_cast<const Hessian<OcpType> &>(hessian),
+                            D_s_copy[0], f_copy[0], packed_g,
+                            batch_primal[0], normalized_multipliers);
+                    if (status != LinsolReturnFlag::SUCCESS)
+                    {
+                        reset();
+                        return status;
+                    }
+                    UnpackNormalizedExplicitMultipliers(
+                        modified_info, normalized_info, false,
+                        normalized_multipliers, batch_multipliers[0]);
+                    for (Index row = 0;
+                         row < info.number_of_eq_constraints; ++row)
+                        g_original_copy[0](row) = g(row, column);
+                    PostProcess(
+                        info, modified_info, jacobian, hessian,
+                        batch_primal[0], batch_multipliers[0],
+                        &D_s, nullptr, g_original_copy[0], false);
+                    for (Index row = 0;
+                         row < info.number_of_primal_variables; ++row)
+                        x(row, column) = batch_primal[0](row);
+                    for (Index row = 0;
+                         row < info.number_of_eq_constraints; ++row)
+                        eq_mult(row, column) = batch_multipliers[0](row);
+                }
+                reset();
+                return LinsolReturnFlag::SUCCESS;
+            }
+
+            MatRealAllocated normalized_f(
+                info.number_of_primal_variables, f.n());
+            MatRealAllocated normalized_g(
+                normalized_info.number_of_eq_constraints, f.n());
+            MatRealAllocated normalized_x(
+                info.number_of_primal_variables, f.n());
+            MatRealAllocated normalized_multipliers(
+                normalized_info.number_of_eq_constraints, f.n());
+
+            // Apply the cached implicit-coordinate transformation once per
+            // column, then solve all parameter-response columns in a single
+            // blocked explicit Riccati traversal.
+            for (Index column = 0; column < f.n(); ++column)
+            {
+                PrepareFullRankRhs(
+                    info, jacobian, nullptr, D_s,
+                    f, g, column);
+                PackNormalizedExplicitConstraintRhs(
+                    modified_info, normalized_info, false,
+                    g_copy[0], packed_g);
+                for (Index row = 0;
+                     row < info.number_of_primal_variables; ++row)
+                    normalized_f(row, column) = f_copy[0](row);
+                for (Index row = 0;
+                     row < normalized_info.number_of_eq_constraints; ++row)
+                    normalized_g(row, column) = packed_g(row);
+            }
+
+            const LinsolReturnFlag status =
+                identity_dynamics_solver_->solve_rhs_batch(
+                    normalized_info,
+                    static_cast<const Jacobian<OcpType> &>(jacobian),
+                    static_cast<const Hessian<OcpType> &>(hessian),
+                    D_s_copy[0], normalized_f, normalized_g,
+                    normalized_x, normalized_multipliers);
+            if (status != LinsolReturnFlag::SUCCESS)
+            {
+                reset();
+                return status;
+            }
+
+            VecRealView packed_multipliers(
+                g_copy[0],
+                normalized_info.number_of_eq_constraints, 0);
+            for (Index column = 0; column < f.n(); ++column)
+            {
+                for (Index row = 0;
+                     row < info.number_of_primal_variables; ++row)
+                    batch_primal[0](row) = normalized_x(row, column);
+                for (Index row = 0;
+                     row < normalized_info.number_of_eq_constraints; ++row)
+                    packed_multipliers(row) =
+                        normalized_multipliers(row, column);
+                UnpackNormalizedExplicitMultipliers(
+                    modified_info, normalized_info, false,
+                    packed_multipliers, batch_multipliers[0]);
+                for (Index row = 0;
+                     row < info.number_of_eq_constraints; ++row)
+                    g_original_copy[0](row) = g(row, column);
+                PostProcess(
+                    info, modified_info, jacobian, hessian,
+                    batch_primal[0], batch_multipliers[0],
+                    &D_s, nullptr, g_original_copy[0], false);
+                for (Index row = 0;
+                     row < info.number_of_primal_variables; ++row)
+                    x(row, column) = batch_primal[0](row);
+                for (Index row = 0;
+                     row < info.number_of_eq_constraints; ++row)
+                    eq_mult(row, column) = batch_multipliers[0](row);
+            }
+            reset();
+            return LinsolReturnFlag::SUCCESS;
+        }
+
+        for (Index column = 0; column < f.n(); ++column)
+        {
+            PrepareFullRankRhs(
+                info, jacobian, D_eq, D_s,
+                f, g, column);
+            batch_primal[0] = 0.0;
+            batch_multipliers[0] = 0.0;
+            const LinsolReturnFlag status = D_eq
+                ? ModifiedAugSystemSolver::solve_rhs(
+                    modified_info, jacobian, hessian,
+                    D_eq_copy[0], D_s_copy[0],
+                    f_copy[0], g_copy[0],
+                    batch_primal[0], batch_multipliers[0])
+                : ModifiedAugSystemSolver::solve_rhs(
+                    modified_info, jacobian, hessian,
+                    D_s_copy[0], f_copy[0], g_copy[0],
+                    batch_primal[0], batch_multipliers[0]);
+            if (status != LinsolReturnFlag::SUCCESS)
+            {
+                reset();
+                return status;
+            }
+            PostProcess(
+                info, modified_info, jacobian, hessian,
+                batch_primal[0], batch_multipliers[0],
+                &D_s, D_eq, g_original_copy[0], false);
+            for (Index row = 0;
+                 row < info.number_of_primal_variables; ++row)
+                x(row, column) = batch_primal[0](row);
+            for (Index row = 0;
+                 row < info.number_of_eq_constraints; ++row)
+                eq_mult(row, column) = batch_multipliers[0](row);
+        }
+    }
+    catch (...)
+    {
+        reset();
+        throw;
+    }
+    reset();
+    return LinsolReturnFlag::SUCCESS;
 }
 
 void AugSystemSolver<ImplicitOcpType>::set_performance_mode(bool set){
@@ -5094,6 +6744,17 @@ ProblemInfo AugSystemSolver<ImplicitOcpType>::PreProcess(const ProblemInfo &info
                                                   VecRealView* D_s)
 {
     if (print_debug){ std::cout << "AugSystemSolver<ImplicitOcpType>::PreProcess start" << std::endl;}
+
+    // PreProcess changes the stage partition in place by moving incoming
+    // null-space state components to controls and the corresponding
+    // dynamics equations to path equalities. Every base or right-hand-side
+    // solve must start from the original partition.
+    number_of_states = info.dims.number_of_states;
+    number_of_controls = info.dims.number_of_controls;
+    number_of_eq_constraints =
+        info.dims.number_of_eq_constraints;
+    number_of_ineq_constraints =
+        info.dims.number_of_ineq_constraints;
 
     // GENERAL VERSION
     #ifdef PROFILE
@@ -5125,9 +6786,7 @@ ProblemInfo AugSystemSolver<ImplicitOcpType>::PreProcess(const ProblemInfo &info
     // Deal with regularization terms
     for (int k = 0; k < K; ++k){
         const Index nx = number_of_states[k];
-        const Index nx_next = number_of_states[k + 1];
         const Index nu = number_of_controls[k];
-        const Index nu_next = number_of_controls[k + 1];
         const Index ng = number_of_eq_constraints[k];
         const Index ng_ineq = number_of_ineq_constraints[k];
         const Index offset_eq_k = info.offsets_g_eq_path[k];
@@ -5345,7 +7004,11 @@ ProblemInfo AugSystemSolver<ImplicitOcpType>::PreProcess(const ProblemInfo &info
 
     start = std::chrono::high_resolution_clock::now();
     #endif
-    ProblemInfo modified_info(ProblemDims(K, number_of_controls, number_of_states, number_of_eq_constraints, number_of_ineq_constraints));
+    ProblemInfo modified_info(ProblemDims(
+        K, number_of_controls, number_of_states,
+        number_of_eq_constraints, number_of_ineq_constraints,
+        0,
+        info.dims.number_of_stage_border_variables));
     #ifdef PROFILE
     stop = std::chrono::high_resolution_clock::now();
     duration_preprocess_info += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
@@ -5395,7 +7058,8 @@ void AugSystemSolver<ImplicitOcpType>::PostProcess(const ProblemInfo &info,
                                                    VecRealView &x, VecRealView &eq_mult,
                                                    const VecRealView* D_s, 
                                                    const VecRealView* D_eq,
-                                                   const VecRealView &g){   
+                                                   const VecRealView &g,
+                                                   const bool reset_matrices){
     // GENERAL VERSION
     if (print_debug){ std::cout << "AugSystemSolver<ImplicitOcpType>::PostProcess start" << std::endl;}
     // VecRealAllocated x_copy(x.m());
@@ -5510,7 +7174,8 @@ void AugSystemSolver<ImplicitOcpType>::PostProcess(const ProblemInfo &info,
     start = std::chrono::high_resolution_clock::now();
     #endif
     #ifndef IGNORE_JAC_HESS_PREPROCESS
-    jacobian.ResetPreProcess(info);
+    if (reset_matrices)
+        jacobian.ResetPreProcess(info);
     #endif
     #ifdef PROFILE
     stop = std::chrono::high_resolution_clock::now();
@@ -5518,7 +7183,8 @@ void AugSystemSolver<ImplicitOcpType>::PostProcess(const ProblemInfo &info,
     start = std::chrono::high_resolution_clock::now();
     #endif
     #ifndef IGNORE_JAC_HESS_PREPROCESS
-    hessian.ResetPreProcess(info, jacobian);
+    if (reset_matrices)
+        hessian.ResetPreProcess(info, jacobian);
     #endif
     #ifdef PROFILE
     stop = std::chrono::high_resolution_clock::now();
@@ -5542,7 +7208,11 @@ void AugSystemSolver<ImplicitOcpType>::PostProcess(const ProblemInfo &info,
             // PrintNpArray(eq_mult, offs_eq_ineq, ng_ineq, "[" + std::to_string(k) + "] eq_mult before ineq regularization");
             // std::cout << "nu: " << nu << " nx: " << nx << " ng_ineq: " << ng_ineq << std::endl;
             // std::cout << "offs: " << offs << " offs_eq_ineq: " << offs_eq_ineq << " offs_slack: " << offs_slack << std::endl;
-            gemv_t(nu + nx, ng_ineq, 1.0, jacobian.Gg_ineqt[k], 0, 0, x, offs, 1.0, g, offs_eq_ineq,
+            const MatRealView &Gg_ineqt =
+                reset_matrices
+                ? static_cast<const MatRealView &>(jacobian.Gg_ineqt[k])
+                : static_cast<const MatRealView &>(jacobian.Gg_ineqt_original[k]);
+            gemv_t(nu + nx, ng_ineq, 1.0, Gg_ineqt, 0, 0, x, offs, 1.0, g, offs_eq_ineq,
                    eq_mult, offs_eq_ineq);
             eq_mult.block(ng_ineq, offs_eq_ineq) =
                 eq_mult.block(ng_ineq, offs_eq_ineq) / (*D_s).block(ng_ineq, offs_slack);
@@ -5559,7 +7229,11 @@ void AugSystemSolver<ImplicitOcpType>::PostProcess(const ProblemInfo &info,
             const Index offs_eq_k = info.offsets_eq[k];            
             if (ng > 0)
             {
-                gemv_t(nu + nx, ng, 1.0, jacobian.Gg_eqt[k], 0, 0, x, offs, 1.0, g, offs_g_eq_k,
+                const MatRealView &Gg_eqt =
+                    reset_matrices
+                    ? static_cast<const MatRealView &>(jacobian.Gg_eqt[k])
+                    : static_cast<const MatRealView &>(jacobian.Gg_eqt_original[k]);
+                gemv_t(nu + nx, ng, 1.0, Gg_eqt, 0, 0, x, offs, 1.0, g, offs_g_eq_k,
                     eq_mult, offs_g_eq_k);
                 eq_mult.block(ng, offs_g_eq_k) =
                     eq_mult.block(ng, offs_g_eq_k) / (*D_eq).block(ng, offs_eq_k);

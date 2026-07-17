@@ -18,7 +18,7 @@
 #include "generators/n_link_planar_robot.hpp"
 #include "generators/quadruped_generator.hpp"
 
-#include "json/single_include/nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <fstream>
 #include <tuple>

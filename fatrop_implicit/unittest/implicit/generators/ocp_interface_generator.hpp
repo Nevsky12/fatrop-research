@@ -6,7 +6,7 @@
 #include "fatrop/ocp/ocp_abstract.hpp"
 #include "../test_problem/implicit_test_problem.hpp"    
 #include "../test_problem/explicit_test_problem.hpp"
-#include "json/single_include/nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <casadi/casadi.hpp>
 

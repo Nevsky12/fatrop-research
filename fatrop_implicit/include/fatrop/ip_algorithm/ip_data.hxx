@@ -6,6 +6,7 @@
 #define __fatrop_ip_algorithm_ip_data_hxx__
 #include "fatrop/common/options.hpp"
 #include "ip_data.hpp"
+#include <cmath>
 
 namespace fatrop
 {
@@ -15,6 +16,11 @@ namespace fatrop
         : nlp_(nlp), info_(nlp->problem_dims()), iterate_data_{*this, *this, *this},
           current_iterate_(&iterate_data_[0]), trial_iterate_(&iterate_data_[1]),
           stored_iterate_(&iterate_data_[2]),
+          warm_start_primal_x_(nlp->nlp_dims().number_of_variables),
+          warm_start_primal_s_(nlp->nlp_dims().number_of_ineq_constraints),
+          warm_start_dual_eq_(nlp->nlp_dims().number_of_eq_constraints),
+          warm_start_dual_bounds_l_(nlp->nlp_dims().number_of_ineq_constraints),
+          warm_start_dual_bounds_u_(nlp->nlp_dims().number_of_ineq_constraints),
           hessian_data_{nlp->problem_dims(), nlp->problem_dims(), nlp->problem_dims()},
           jacobian_data_{nlp->problem_dims(), nlp->problem_dims(), nlp->problem_dims()},
           lower_bounds_(nlp->nlp_dims().number_of_ineq_constraints),
@@ -113,6 +119,48 @@ namespace fatrop
     void IpData<ProblemType>::register_options(OptionRegistry &registry)
     {
         registry.register_option("tolerance", &IpData::set_tolerance, this);
+    }
+
+    template <typename ProblemType>
+    void IpData<ProblemType>::set_warm_start(const VecRealView &primal_x,
+                                             const VecRealView &primal_s,
+                                             const VecRealView &dual_eq,
+                                             const VecRealView &dual_bounds_l,
+                                             const VecRealView &dual_bounds_u, Scalar mu)
+    {
+        const NlpDims &dims = nlp_->nlp_dims();
+        fatrop_assert_msg(primal_x.m() == dims.number_of_variables,
+                          "Warm-start primal vector has the wrong dimension.");
+        fatrop_assert_msg(primal_s.m() == dims.number_of_ineq_constraints,
+                          "Warm-start slack vector has the wrong dimension.");
+        fatrop_assert_msg(dual_eq.m() == dims.number_of_eq_constraints,
+                          "Warm-start equality-dual vector has the wrong dimension.");
+        fatrop_assert_msg(dual_bounds_l.m() == dims.number_of_ineq_constraints,
+                          "Warm-start lower-bound-dual vector has the wrong dimension.");
+        fatrop_assert_msg(dual_bounds_u.m() == dims.number_of_ineq_constraints,
+                          "Warm-start upper-bound-dual vector has the wrong dimension.");
+        fatrop_assert_msg(primal_x.is_finite() && primal_s.is_finite()
+                              && dual_eq.is_finite() && dual_bounds_l.is_finite()
+                              && dual_bounds_u.is_finite(),
+                          "Warm-start vectors must contain only finite values.");
+        fatrop_assert_msg(std::isfinite(mu) && mu > 0.,
+                          "Warm-start barrier parameter must be finite and positive.");
+
+        warm_start_primal_x_ = primal_x;
+        warm_start_primal_s_ = primal_s;
+        warm_start_dual_eq_ = dual_eq;
+        warm_start_dual_bounds_l_ = dual_bounds_l;
+        warm_start_dual_bounds_u_ = dual_bounds_u;
+        warm_start_mu_ = mu;
+        warm_start_available_ = true;
+    }
+
+    template <typename ProblemType>
+    void IpData<ProblemType>::set_warm_start_from_current_iterate()
+    {
+        const Iterate &iterate = current_iterate();
+        set_warm_start(iterate.primal_x(), iterate.primal_s(), iterate.dual_eq(),
+                       iterate.dual_bounds_l(), iterate.dual_bounds_u(), iterate.mu());
     }
 
 } // namespace fatrop

@@ -313,9 +313,10 @@ namespace fatrop
             virtual Index eval_BAJbt(const Scalar *states_kp1, const Scalar *inputs_k,
                                     const Scalar *states_k, MAT *res, MAT *res_J, MAT *res_j_inv, const Index k)
             {
-                throw std::runtime_error("function still needs to be updated for combined evaluation of BA, J and J_inv");
                 // set zero
                 blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+                blasfeo_gese_wrap(res_J->m, res_J->n, 0.0, res_J, 0, 0);
+                blasfeo_gese_wrap(res_j_inv->m, res_j_inv->n, 0.0, res_j_inv, 0, 0);
                 // Matrix B
                 // [  0,    0  ]
                 // [  0,    0  ]
@@ -332,8 +333,24 @@ namespace fatrop
                 blasfeo_matel_wrap(res, 1, 3) = dt_ / m_;
 
                 blasfeo_diare_wrap(4, 1.0, res, 2, 0);
-                blasfeo_matel_wrap(res, 4, 0) = dt_;
-                blasfeo_matel_wrap(res, 5, 1) = dt_;
+                if (MAKE_EXPLICIT)
+                {
+                    blasfeo_matel_wrap(res, 4, 0) = dt_;
+                    blasfeo_matel_wrap(res, 5, 1) = dt_;
+                }
+
+                // Transpose of dF/dx_{k+1} and its inverse. In the explicit
+                // representation this is simply -I. The alternative form
+                // keeps the position update implicit in the next velocity.
+                blasfeo_diare_wrap(4, -1.0, res_J, 0, 0);
+                blasfeo_diare_wrap(4, -1.0, res_j_inv, 0, 0);
+                if (!MAKE_EXPLICIT)
+                {
+                    blasfeo_matel_wrap(res_J, 2, 0) = dt_;
+                    blasfeo_matel_wrap(res_J, 3, 1) = dt_;
+                    blasfeo_matel_wrap(res_j_inv, 2, 0) = -dt_;
+                    blasfeo_matel_wrap(res_j_inv, 3, 1) = -dt_;
+                }
                 return 0;
             }
             /*
@@ -372,9 +389,12 @@ namespace fatrop
                                       MAT *res_kp1, MAT *res_FuFxt,
                                       const Index k)
             {
-                throw std::runtime_error("function still needs to be updated for combined evaluation of RSQrqt and next stage terms");
                 // set zero
                 blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
+                if (res_kp1 != nullptr)
+                    blasfeo_gese_wrap(res_kp1->m, res_kp1->n, 0.0, res_kp1, 0, 0);
+                if (res_FuFxt != nullptr)
+                    blasfeo_gese_wrap(res_FuFxt->m, res_FuFxt->n, 0.0, res_FuFxt, 0, 0);
                 // Matrix R
                 // [ 2,  0 ]
                 // [ 0,  2 ]

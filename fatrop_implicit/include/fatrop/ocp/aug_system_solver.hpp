@@ -127,6 +127,24 @@ namespace fatrop
                                            VecRealView &eq_mult);
 
         /**
+         * @brief Applies an existing factorization to multiple right-hand
+         * sides in one blocked Riccati traversal.
+         *
+         * Matrices are column-major collections of right-hand sides:
+         * `f` and `x` have one row per primal variable, while `g` and
+         * `eq_mult` have one row per equality constraint.
+         */
+        virtual LinsolReturnFlag solve_rhs_batch(
+            const ProblemInfo &info,
+            const Jacobian<OcpType> &jacobian,
+            const Hessian<OcpType> &hessian,
+            const VecRealView &D_s,
+            const MatRealView &f,
+            const MatRealView &g,
+            MatRealView &x,
+            MatRealView &eq_mult);
+
+        /**
          * @brief Solves the system for a new right-hand side with path equality constraint regularization.
          * @param info Problem information.
          * @param jacobian Jacobian of the constraints.
@@ -224,7 +242,7 @@ namespace fatrop
          * @brief Constructs an AugSystemSolver<OcpType> object.
          * @param info Problem information for the optimal control problem.
          */
-        AugSystemSolver<AcceleratedOcpType>(const ProblemInfo &info);
+        AugSystemSolver(const ProblemInfo &info);
 
         /**
          * @brief Solves the augmented system without path equality constraint regularization.
@@ -682,9 +700,97 @@ namespace fatrop
                                            const VecRealView &D_s, const VecRealView &f,
                                            const VecRealView &g, VecRealView &x, VecRealView &eq_mult);
 
+        /**
+         * @brief Applies an unstabilized factorization to a batch of
+         * right-hand sides when every implicit next-state Jacobian has full
+         * rank.
+         *
+         * This is the multi-column counterpart of the unstabilized
+         * `solve_rhs` overload. Coefficient preprocessing is performed once
+         * for the complete batch; rank-deficient systems continue to use the
+         * scalar fallback.
+         */
+        virtual LinsolReturnFlag solve_rhs_batch(
+            const ProblemInfo &info,
+            Jacobian<ImplicitOcpType> &jacobian,
+            Hessian<ImplicitOcpType> &hessian,
+            const VecRealView &D_s,
+            const MatRealView &f,
+            const MatRealView &g,
+            MatRealView &x,
+            MatRealView &eq_mult);
+
+        /**
+         * @brief Applies a stabilized factorization to a batch of right-hand
+         * sides when every implicit next-state Jacobian has full rank.
+         *
+         * The rank-aware coefficient preprocessing is performed once for the
+         * complete batch.  Each column then receives only the cached linear
+         * right-hand-side transformation, Riccati substitution, and inverse
+         * solution transformation.  Callers must first obtain the
+         * factorization through `solve`; rank-deficient systems continue to
+         * use the scalar `solve_rhs` fallback.
+         */
+        virtual LinsolReturnFlag solve_rhs_batch(
+            const ProblemInfo &info,
+            Jacobian<ImplicitOcpType> &jacobian,
+            Hessian<ImplicitOcpType> &hessian,
+            const VecRealView &D_eq,
+            const VecRealView &D_s,
+            const MatRealView &f,
+            const MatRealView &g,
+            MatRealView &x,
+            MatRealView &eq_mult);
+
 
         void set_performance_mode(bool set);
+        void register_options(OptionRegistry &registry);
+        void set_it_ref(const bool &value)
+        {
+            ModifiedAugSystemSolver::set_it_ref(value);
+            identity_dynamics_solver_->set_it_ref(value);
+        }
+        void set_perturbed_mode(const bool &value)
+        {
+            ModifiedAugSystemSolver::set_perturbed_mode(value);
+            identity_dynamics_solver_->set_perturbed_mode(value);
+        }
+        void set_perturbed_mode_param(const double &value)
+        {
+            ModifiedAugSystemSolver::set_perturbed_mode_param(value);
+            identity_dynamics_solver_->set_perturbed_mode_param(value);
+        }
+        void set_lu_fact_tol(const Scalar &value)
+        {
+            lu_fact_tol = value;
+            ModifiedAugSystemSolver::set_lu_fact_tol(value);
+            identity_dynamics_solver_->set_lu_fact_tol(value);
+        }
+        void set_diagnostic(const bool &value)
+        {
+            ModifiedAugSystemSolver::set_diagnostic(value);
+            identity_dynamics_solver_->set_diagnostic(value);
+        }
+        void set_increased_accuracy(const bool &value)
+        {
+            ModifiedAugSystemSolver::set_increased_accuracy(value);
+            identity_dynamics_solver_->set_increased_accuracy(value);
+        }
         void set_preprocessing_file_name(const std::string &name){preprocessing_file_name = name;};
+
+        bool using_identity_dynamics_fast_path() const noexcept
+        {
+            return identity_factorization_ready_;
+        }
+
+        /**
+         * @brief True when full-rank implicit dynamics were normalized once
+         * and delegated to the explicit Riccati factorization.
+         */
+        bool using_normalized_explicit_fast_path() const noexcept
+        {
+            return normalized_explicit_factorization_ready_;
+        }
 
         std::chrono::nanoseconds duration_preprocess = std::chrono::nanoseconds(0);
         std::chrono::nanoseconds duration_preprocess_jac = std::chrono::nanoseconds(0);
@@ -709,6 +815,15 @@ namespace fatrop
         std::chrono::nanoseconds duration_post_reset_hessian_pre = std::chrono::nanoseconds(0);
         std::chrono::nanoseconds duration_post_regularization = std::chrono::nanoseconds(0);
     private:
+        bool CanUseIdentityDynamicsFastPath(
+            const ProblemInfo &info,
+            const Jacobian<ImplicitOcpType> &jacobian,
+            const Hessian<ImplicitOcpType> &hessian) const;
+
+        void MarkFullRankIdentityDynamics(
+            const ProblemInfo &info,
+            Jacobian<ImplicitOcpType> &jacobian) const;
+
         ProblemInfo PreProcess(const ProblemInfo &info, 
                         Jacobian<ImplicitOcpType> &jacobian,
                         Hessian<ImplicitOcpType> &hessian,
@@ -721,7 +836,40 @@ namespace fatrop
                          Hessian<ImplicitOcpType> &hessian,
                          VecRealView &x, VecRealView &eq_mult,
                          const VecRealView* D_s, const VecRealView* D_eq,
-                         const VecRealView &g);
+                         const VecRealView &g,
+                         bool reset_matrices = true);
+
+        LinsolReturnFlag SolveStabilizedRankDeficient(
+            const ProblemInfo &original_info,
+            const ProblemInfo &modified_info,
+            Jacobian<ImplicitOcpType> &jacobian,
+            Hessian<ImplicitOcpType> &hessian,
+            const VecRealView &D_x,
+            const VecRealView &D_s,
+            const VecRealView &f,
+            const VecRealView &g,
+            VecRealView &x,
+            VecRealView &eq_mult);
+
+        void PrepareFullRankRhs(
+            const ProblemInfo &info,
+            Jacobian<ImplicitOcpType> &jacobian,
+            const VecRealView *D_eq,
+            const VecRealView &D_s,
+            const MatRealView &f,
+            const MatRealView &g,
+            Index column);
+
+        LinsolReturnFlag SolveFullRankRhsBatch(
+            const ProblemInfo &info,
+            Jacobian<ImplicitOcpType> &jacobian,
+            Hessian<ImplicitOcpType> &hessian,
+            const VecRealView *D_eq,
+            const VecRealView &D_s,
+            const MatRealView &f,
+            const MatRealView &g,
+            MatRealView &x,
+            MatRealView &eq_mult);
 
         // take last (nx_next - rank) columns (or rows) and insert them after
         // the first nu_next columns (or rows) of A, while shifting all
@@ -745,15 +893,23 @@ namespace fatrop
         std::vector<Index> number_of_ineq_constraints;
         std::vector<VecRealAllocated> f_copy;
         std::vector<VecRealAllocated> g_copy;
+        std::vector<VecRealAllocated> g_original_copy;
         std::vector<VecRealAllocated> D_x_copy;
         std::vector<VecRealAllocated> D_s_copy;
         std::vector<VecRealAllocated> D_eq_copy;
         std::vector<VecRealAllocated> x_copy;
         std::vector<VecRealAllocated> eq_mult_copy;
+        std::vector<VecRealAllocated> batch_primal;
+        std::vector<VecRealAllocated> batch_multipliers;
 
         std::unique_ptr<MatRealAllocated> scratch = std::make_unique<MatRealAllocated>(0,0);
         std::vector<MatRealAllocated> JBAbt;
         std::vector<MatRealAllocated> JBAbt_modified;
+        std::unique_ptr<AugSystemSolver<OcpType>>
+            identity_dynamics_solver_;
+        bool identity_factorization_ready_ = false;
+        bool normalized_explicit_factorization_ready_ = false;
+        bool normalized_explicit_stabilized_ = false;
         // std::vector<PermutationMatrix> Pr_extended;
     };
 

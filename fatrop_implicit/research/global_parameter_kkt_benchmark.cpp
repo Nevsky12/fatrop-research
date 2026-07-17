@@ -1,9 +1,15 @@
+#include "fatrop/common/options.hpp"
+#include "fatrop/ip_algorithm/ip_alg_builder.hpp"
+#include "fatrop/ip_algorithm/ip_algorithm.hpp"
 #include "fatrop/linear_algebra/linear_algebra.hpp"
+#include "fatrop/linear_algebra/blasfeo_wrapper.hpp"
 #include "fatrop/ocp/aug_system_solver.hpp"
 #include "fatrop/ocp/dims.hpp"
 #include "fatrop/ocp/hessian.hpp"
 #include "fatrop/ocp/jacobian.hpp"
 #include "fatrop/ocp/problem_info.hpp"
+#include "fatrop/ocp/parametric_implicit_nlp_ocp.hpp"
+#include "fatrop/ocp/parametric_implicit_ocp.hpp"
 #include "fatrop/ocp/type.hpp"
 
 #include <Eigen/Dense>
@@ -30,11 +36,13 @@ using fatrop::ImplicitOcpType;
 using fatrop::Index;
 using fatrop::Jacobian;
 using fatrop::LinsolReturnFlag;
+using fatrop::MatRealAllocated;
 using fatrop::OcpType;
 using fatrop::ProblemDims;
 using fatrop::ProblemInfo;
 using fatrop::Scalar;
 using fatrop::VecRealAllocated;
+using fatrop::blasfeo_matel_wrap;
 
 namespace
 {
@@ -43,6 +51,7 @@ struct Config
 {
     std::string problem = "synthetic";
     Index stages = 20;
+    Index phases = 1;
     Index nx = 6;
     Index nu = 3;
     Index parameters = 2;
@@ -52,6 +61,62 @@ struct Config
     bool identity_next_jacobian = false;
     bool dense_validation = true;
     bool run_ipopt = false;
+    bool run_native_ipm = false;
+    std::string ipopt_linear_solver = "mumps";
+};
+
+struct PhaseLayout
+{
+    explicit PhaseLayout(const Config &config)
+        : stage_phase(static_cast<std::size_t>(config.stages), 0),
+          phase_first_stage(static_cast<std::size_t>(config.phases), 0),
+          phase_last_stage(static_cast<std::size_t>(config.phases), 0),
+          linkage_transition(
+              static_cast<std::size_t>(config.stages - 1), false)
+    {
+        const Index base_nodes = config.stages / config.phases;
+        const Index extra_nodes = config.stages % config.phases;
+        Index cursor = 0;
+        for (Index phase = 0; phase < config.phases; ++phase)
+        {
+            const Index nodes =
+                base_nodes + (phase < extra_nodes ? 1 : 0);
+            phase_first_stage[static_cast<std::size_t>(phase)] = cursor;
+            for (Index local = 0; local < nodes; ++local)
+                stage_phase[static_cast<std::size_t>(cursor + local)] =
+                    phase;
+            cursor += nodes;
+            phase_last_stage[static_cast<std::size_t>(phase)] =
+                cursor - 1;
+            if (phase + 1 < config.phases)
+            {
+                linkage_transition[static_cast<std::size_t>(cursor - 1)] =
+                    true;
+            }
+        }
+    }
+
+    bool is_phase_end(Index stage) const
+    {
+        const Index phase =
+            stage_phase[static_cast<std::size_t>(stage)];
+        return phase_last_stage[static_cast<std::size_t>(phase)] == stage;
+    }
+
+    bool is_linkage(Index transition) const
+    {
+        return linkage_transition[static_cast<std::size_t>(transition)];
+    }
+
+    Index phase(Index stage) const
+    {
+        return stage_phase[static_cast<std::size_t>(stage)];
+    }
+
+    std::vector<Index> stage_phase;
+    std::vector<Index> phase_first_stage;
+    std::vector<Index> phase_last_stage;
+    std::vector<bool> linkage_transition;
 };
 
 std::vector<Index> constant_vector(Index size, Index value)
@@ -59,16 +124,22 @@ std::vector<Index> constant_vector(Index size, Index value)
     return std::vector<Index>(static_cast<std::size_t>(size), value);
 }
 
-std::vector<Index> controls_vector(const Config &config)
+std::vector<Index> controls_vector(const Config &config,
+                                   const PhaseLayout &layout)
 {
     const Index local_controls =
         config.nu + config.collocation_degree * config.nx;
     auto controls = constant_vector(config.stages, local_controls);
-    controls.back() = 0;
+    for (Index k = 0; k < config.stages; ++k)
+    {
+        if (layout.is_phase_end(k))
+            controls[static_cast<std::size_t>(k)] = 0;
+    }
     return controls;
 }
 
-std::vector<Index> equalities_vector(const Config &config)
+std::vector<Index> equalities_vector(const Config &config,
+                                     const PhaseLayout &layout)
 {
     if (config.problem == "dtoc3")
     {
@@ -78,7 +149,11 @@ std::vector<Index> equalities_vector(const Config &config)
     }
     auto equalities = constant_vector(
         config.stages, config.collocation_degree * config.nx);
-    equalities.back() = 0;
+    for (Index k = 0; k < config.stages; ++k)
+    {
+        if (layout.is_phase_end(k))
+            equalities[static_cast<std::size_t>(k)] = 0;
+    }
     return equalities;
 }
 
@@ -185,9 +260,10 @@ struct PhysicalProblem
 {
     explicit PhysicalProblem(const Config &config)
         : config(config),
-          controls(controls_vector(config)),
+          phase_layout(config),
+          controls(controls_vector(config, phase_layout)),
           states(constant_vector(config.stages, config.nx)),
-          equalities(equalities_vector(config)),
+          equalities(equalities_vector(config, phase_layout)),
           inequalities(constant_vector(config.stages, 0)),
           dims(config.stages, controls, states, equalities, inequalities),
           info(dims),
@@ -277,6 +353,51 @@ struct PhysicalProblem
             }
         }
 
+        const auto populate_phase_linkage = [&](Index k) {
+            const Index local_nu = controls[k];
+            const Index phase = phase_layout.phase(k);
+            jacobian.BAbt[k] = 0.0;
+            jacobian.Jt[k] = 0.0;
+            hessian.FuFx[k] = 0.0;
+
+            for (Index equation = 0; equation < config.nx; ++equation)
+            {
+                for (Index state = 0; state < config.nx; ++state)
+                {
+                    const double diagonal =
+                        state == equation
+                            ? 0.84 +
+                                  0.015 * static_cast<double>(
+                                              (phase + equation) % 5)
+                            : 0.0;
+                    const double neighbour =
+                        std::abs(state - equation) == 1
+                            ? 0.025 *
+                                  std::cos(0.19 * static_cast<double>(
+                                                      phase + state +
+                                                      equation + 1))
+                            : 0.0;
+                    jacobian.BAbt[k](local_nu + state, equation) =
+                        diagonal + neighbour;
+                    jacobian.Jt[k](state, equation) =
+                        state == equation ? -1.0 : 0.0;
+                }
+
+                const Index constraint =
+                    info.offsets_g_eq_dyn[k] + equation;
+                rhs_g(constraint) =
+                    deterministic_value(constraint, phase + 5, 0.06);
+                for (Index p = 0; p < config.parameters; ++p)
+                {
+                    border_constraints(constraint, p) =
+                        0.04 *
+                        std::sin(0.13 * static_cast<double>(
+                                            (equation + 1) * (p + 1)) +
+                                 0.17 * static_cast<double>(phase + 1));
+                }
+            }
+        };
+
         if (config.problem == "dtoc3")
         {
             const double step =
@@ -326,7 +447,6 @@ struct PhysicalProblem
         {
             const CollocationCoefficients coefficients(
                 config.collocation_degree);
-            const double step = 0.04;
             Eigen::MatrixXd mass(config.nx, config.nx);
             Eigen::MatrixXd system(config.nx, config.nx);
             Eigen::MatrixXd input(config.nx, config.nu);
@@ -360,6 +480,16 @@ struct PhysicalProblem
 
             for (Index k = 0; k < config.stages - 1; ++k)
             {
+                if (phase_layout.is_linkage(k))
+                {
+                    populate_phase_linkage(k);
+                    continue;
+                }
+
+                const Index phase = phase_layout.phase(k);
+                const double step =
+                    0.04 *
+                    (1.0 + 0.12 * static_cast<double>(phase % 5));
                 const Index local_nu = controls[k];
                 jacobian.BAbt[k] = 0.0;
                 jacobian.Jt[k] = 0.0;
@@ -444,6 +574,15 @@ struct PhysicalProblem
         {
             for (Index k = 0; k < config.stages - 1; ++k)
             {
+                if (phase_layout.is_linkage(k))
+                {
+                    populate_phase_linkage(k);
+                    continue;
+                }
+
+                const Index phase = phase_layout.phase(k);
+                const double phase_scale =
+                    1.0 + 0.08 * static_cast<double>(phase % 7);
                 const Index local_nu = controls[k];
                 jacobian.BAbt[k] = 0.0;
                 jacobian.Jt[k] = 0.0;
@@ -454,14 +593,16 @@ struct PhysicalProblem
                     for (Index i = 0; i < local_nu; ++i)
                     {
                         jacobian.BAbt[k](i, j) =
-                            0.04 * std::cos(
+                            0.04 * phase_scale * std::cos(
                                        0.11 * static_cast<double>(
-                                                  (i + 1) * (j + 2)));
+                                                  (i + 1) * (j + 2)) +
+                                       0.07 * static_cast<double>(phase));
                     }
 
                     for (Index i = 0; i < config.nx; ++i)
                     {
-                        const double diagonal = i == j ? 0.92 : 0.0;
+                        const double diagonal =
+                            i == j ? 0.92 - 0.01 * (phase % 3) : 0.0;
                         const double neighbour =
                             std::abs(i - j) == 1 ? 0.015 : 0.0;
                         jacobian.BAbt[k](local_nu + i, j) =
@@ -475,7 +616,8 @@ struct PhysicalProblem
                                        ? -1.0
                                        : -1.08 -
                                              0.002 * static_cast<double>(
-                                                         (j + k) % 7))
+                                                         (j + k + phase) %
+                                                         7))
                                 : 0.0;
                         const double neighbour =
                             !config.identity_next_jacobian &&
@@ -497,7 +639,8 @@ struct PhysicalProblem
                             0.025 *
                             std::cos(0.13 * static_cast<double>(
                                                 (j + 1) * (p + 2)) +
-                                     0.03 * static_cast<double>(k));
+                                     0.03 * static_cast<double>(k) +
+                                     0.11 * static_cast<double>(phase));
                     }
                 }
 
@@ -528,6 +671,7 @@ struct PhysicalProblem
     }
 
     Config config;
+    PhaseLayout phase_layout;
     std::vector<Index> controls;
     std::vector<Index> states;
     std::vector<Index> equalities;
@@ -544,6 +688,338 @@ struct PhysicalProblem
     Eigen::MatrixXd border_constraints;
     Eigen::MatrixXd border_hessian;
     Eigen::VectorXd rhs_parameters;
+};
+
+class PhysicalParametricOcp final
+    : public fatrop::ParametricImplicitOcpAbstract
+{
+public:
+    explicit PhysicalParametricOcp(const PhysicalProblem &problem)
+        : problem_(problem)
+    {
+        if (problem_.config.cross_hessian_scale != 0.0)
+            throw std::runtime_error(
+                "The full-solver comparison currently requires zero "
+                "cross-stage objective curvature");
+        next_state_inverse_.reserve(
+            static_cast<std::size_t>(problem_.config.stages - 1));
+        for (Index stage = 0; stage + 1 < problem_.config.stages; ++stage)
+        {
+            Eigen::MatrixXd next(problem_.config.nx, problem_.config.nx);
+            for (Index row = 0; row < problem_.config.nx; ++row)
+                for (Index column = 0; column < problem_.config.nx; ++column)
+                    next(row, column) = problem_.jacobian.Jt[stage](row, column);
+            next_state_inverse_.push_back(next.inverse());
+        }
+    }
+
+    Index get_nx(Index) const override { return problem_.config.nx; }
+    Index get_nu(Index stage) const override
+    {
+        return problem_.controls[static_cast<std::size_t>(stage)];
+    }
+    Index get_ng(Index stage) const override
+    {
+        return problem_.equalities[static_cast<std::size_t>(stage)];
+    }
+    Index get_ng_ineq(Index) const override { return 0; }
+    Index get_np() const override { return problem_.config.parameters; }
+    Index get_horizon_length() const override
+    {
+        return problem_.config.stages;
+    }
+
+    Index eval_BAJbt(
+        const Scalar *, const Scalar *, const Scalar *, const Scalar *,
+        MAT *ba, MAT *jt, MAT *jt_inv, Index stage) override
+    {
+        const Index local = problem_.controls[stage] + problem_.config.nx;
+        for (Index row = 0; row < local; ++row)
+            for (Index column = 0; column < problem_.config.nx; ++column)
+                blasfeo_matel_wrap(ba, row, column) =
+                    problem_.jacobian.BAbt[stage](row, column);
+        for (Index row = 0; row < problem_.config.nx; ++row)
+        {
+            for (Index column = 0; column < problem_.config.nx; ++column)
+            {
+                blasfeo_matel_wrap(jt, row, column) =
+                    problem_.jacobian.Jt[stage](row, column);
+                blasfeo_matel_wrap(jt_inv, row, column) =
+                    next_state_inverse_[static_cast<std::size_t>(stage)](
+                        row, column);
+            }
+        }
+        return 0;
+    }
+
+    Index eval_dynamics_parameter_jacobian(
+        const Scalar *, const Scalar *, const Scalar *, const Scalar *,
+        MAT *res, Index stage) override
+    {
+        const Index offset = problem_.info.offsets_g_eq_dyn[stage];
+        for (Index row = 0; row < problem_.config.nx; ++row)
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                blasfeo_matel_wrap(res, row, parameter) =
+                    problem_.border_constraints(offset + row, parameter);
+        return 0;
+    }
+
+    Index eval_RSQrqt(
+        const Scalar *scale, const Scalar *, const Scalar *, const Scalar *,
+        const Scalar *, const Scalar *, const Scalar *, const Scalar *,
+        MAT *res, MAT *, MAT *res_FuFxt, Index stage) override
+    {
+        const Index local = problem_.controls[stage] + problem_.config.nx;
+        for (Index row = 0; row < local; ++row)
+            for (Index column = 0; column < local; ++column)
+                blasfeo_matel_wrap(res, row, column) +=
+                    *scale * problem_.hessian.RSQrqt[stage](row, column);
+        if (res_FuFxt != nullptr)
+        {
+            for (Index row = 0; row < local; ++row)
+                for (Index column = 0; column < problem_.config.nx; ++column)
+                    blasfeo_matel_wrap(res_FuFxt, row, column) +=
+                        *scale * problem_.hessian.FuFx[stage](row, column);
+        }
+        return 0;
+    }
+
+    Index eval_parameter_hessian(
+        const Scalar *scale, const Scalar *, const Scalar *, const Scalar *,
+        const Scalar *, const Scalar *, const Scalar *, const Scalar *,
+        MAT *res_ux_p, MAT *, MAT *res_pp, Index stage) override
+    {
+        const Index local = problem_.controls[stage] + problem_.config.nx;
+        const Index offset = problem_.info.offsets_primal_u[stage];
+        for (Index row = 0; row < local; ++row)
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                blasfeo_matel_wrap(res_ux_p, row, parameter) =
+                    *scale * problem_.border_primal(offset + row, parameter);
+        if (stage == 0)
+        {
+            for (Index row = 0; row < problem_.config.parameters; ++row)
+                for (Index column = 0; column < problem_.config.parameters;
+                     ++column)
+                    blasfeo_matel_wrap(res_pp, row, column) =
+                        *scale * problem_.border_hessian(row, column);
+        }
+        return 0;
+    }
+
+    Index eval_Ggt(
+        const Scalar *, const Scalar *, const Scalar *, MAT *res,
+        Index stage) override
+    {
+        const Index local = problem_.controls[stage] + problem_.config.nx;
+        const Index constraints = problem_.equalities[stage];
+        for (Index row = 0; row < local; ++row)
+            for (Index column = 0; column < constraints; ++column)
+                blasfeo_matel_wrap(res, row, column) =
+                    problem_.jacobian.Gg_eqt[stage](row, column);
+        return 0;
+    }
+
+    Index eval_Ggt_ineq(
+        const Scalar *, const Scalar *, const Scalar *, MAT *, Index) override
+    {
+        return 0;
+    }
+
+    Index eval_equality_parameter_jacobian(
+        const Scalar *, const Scalar *, const Scalar *, MAT *res,
+        Index stage) override
+    {
+        const Index offset = problem_.info.offsets_g_eq_path[stage];
+        for (Index row = 0; row < problem_.equalities[stage]; ++row)
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                blasfeo_matel_wrap(res, row, parameter) =
+                    problem_.border_constraints(offset + row, parameter);
+        return 0;
+    }
+
+    Index eval_inequality_parameter_jacobian(
+        const Scalar *, const Scalar *, const Scalar *, MAT *, Index) override
+    {
+        return 0;
+    }
+
+    Index eval_b(
+        const Scalar *states_kp1, const Scalar *inputs_k,
+        const Scalar *states_k, const Scalar *parameters,
+        Scalar *res, Index stage) override
+    {
+        const Index nu = problem_.controls[stage];
+        const Index local = nu + problem_.config.nx;
+        const Index constraint_offset = problem_.info.offsets_g_eq_dyn[stage];
+        for (Index equation = 0; equation < problem_.config.nx; ++equation)
+        {
+            Scalar value = problem_.rhs_g(constraint_offset + equation);
+            for (Index variable = 0; variable < local; ++variable)
+                value += problem_.jacobian.BAbt[stage](variable, equation)
+                       * local_value(inputs_k, states_k, nu, variable);
+            for (Index state = 0; state < problem_.config.nx; ++state)
+                value += problem_.jacobian.Jt[stage](state, equation)
+                       * states_kp1[state];
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                value += problem_.border_constraints(
+                             constraint_offset + equation, parameter)
+                       * parameters[parameter];
+            res[equation] = value;
+        }
+        return 0;
+    }
+
+    Index eval_g(
+        const Scalar *inputs_k, const Scalar *states_k,
+        const Scalar *parameters, Scalar *res, Index stage) override
+    {
+        const Index nu = problem_.controls[stage];
+        const Index local = nu + problem_.config.nx;
+        const Index constraint_offset = problem_.info.offsets_g_eq_path[stage];
+        for (Index equation = 0; equation < problem_.equalities[stage];
+             ++equation)
+        {
+            Scalar value = problem_.rhs_g(constraint_offset + equation);
+            for (Index variable = 0; variable < local; ++variable)
+                value += problem_.jacobian.Gg_eqt[stage](variable, equation)
+                       * local_value(inputs_k, states_k, nu, variable);
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                value += problem_.border_constraints(
+                             constraint_offset + equation, parameter)
+                       * parameters[parameter];
+            res[equation] = value;
+        }
+        return 0;
+    }
+
+    Index eval_gineq(
+        const Scalar *, const Scalar *, const Scalar *, Scalar *, Index) override
+    {
+        return 0;
+    }
+
+    Index eval_rq(
+        const Scalar *scale, const Scalar *inputs_k, const Scalar *states_k,
+        const Scalar *parameters, Scalar *res, Index stage) override
+    {
+        const Index nu = problem_.controls[stage];
+        const Index local = nu + problem_.config.nx;
+        const Index offset = problem_.info.offsets_primal_u[stage];
+        for (Index row = 0; row < local; ++row)
+        {
+            Scalar value = problem_.rhs_x(offset + row);
+            for (Index column = 0; column < local; ++column)
+                value += problem_.hessian.RSQrqt[stage](row, column)
+                       * local_value(inputs_k, states_k, nu, column);
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                value += problem_.border_primal(offset + row, parameter)
+                       * parameters[parameter];
+            res[row] = *scale * value;
+        }
+        return 0;
+    }
+
+    Index eval_rp(
+        const Scalar *scale, const Scalar *inputs_k, const Scalar *states_k,
+        const Scalar *parameters, Scalar *res, Index stage) override
+    {
+        const Index nu = problem_.controls[stage];
+        const Index local = nu + problem_.config.nx;
+        const Index offset = problem_.info.offsets_primal_u[stage];
+        for (Index parameter = 0; parameter < problem_.config.parameters;
+             ++parameter)
+        {
+            Scalar value = 0.0;
+            for (Index row = 0; row < local; ++row)
+                value += problem_.border_primal(offset + row, parameter)
+                       * local_value(inputs_k, states_k, nu, row);
+            if (stage == 0)
+            {
+                value += problem_.rhs_parameters(parameter);
+                for (Index column = 0; column < problem_.config.parameters;
+                     ++column)
+                    value += problem_.border_hessian(parameter, column)
+                           * parameters[column];
+            }
+            res[parameter] = *scale * value;
+        }
+        return 0;
+    }
+
+    Index eval_L(
+        const Scalar *scale, const Scalar *inputs_k, const Scalar *states_k,
+        const Scalar *parameters, Scalar *res, Index stage) override
+    {
+        const Index nu = problem_.controls[stage];
+        const Index local = nu + problem_.config.nx;
+        const Index offset = problem_.info.offsets_primal_u[stage];
+        Scalar value = 0.0;
+        for (Index row = 0; row < local; ++row)
+        {
+            const Scalar row_value = local_value(inputs_k, states_k, nu, row);
+            value += problem_.rhs_x(offset + row) * row_value;
+            for (Index column = 0; column < local; ++column)
+                value += 0.5 * row_value
+                       * problem_.hessian.RSQrqt[stage](row, column)
+                       * local_value(inputs_k, states_k, nu, column);
+            for (Index parameter = 0; parameter < problem_.config.parameters;
+                 ++parameter)
+                value += row_value
+                       * problem_.border_primal(offset + row, parameter)
+                       * parameters[parameter];
+        }
+        if (stage == 0)
+        {
+            for (Index row = 0; row < problem_.config.parameters; ++row)
+            {
+                value += problem_.rhs_parameters(row) * parameters[row];
+                for (Index column = 0; column < problem_.config.parameters;
+                     ++column)
+                    value += 0.5 * parameters[row]
+                           * problem_.border_hessian(row, column)
+                           * parameters[column];
+            }
+        }
+        *res = *scale * value;
+        return 0;
+    }
+
+    Index get_bounds(Scalar *, Scalar *, Index) const override { return 0; }
+
+    Index get_initial_xk(Scalar *xk, Index) const override
+    {
+        std::fill(xk, xk + problem_.config.nx, 0.0);
+        return 0;
+    }
+
+    Index get_initial_uk(Scalar *uk, Index stage) const override
+    {
+        std::fill(uk, uk + problem_.controls[stage], 0.0);
+        return 0;
+    }
+
+    Index get_initial_parameters(Scalar *parameters) const override
+    {
+        std::fill(
+            parameters, parameters + problem_.config.parameters, 0.0);
+        return 0;
+    }
+
+private:
+    static Scalar local_value(
+        const Scalar *inputs, const Scalar *states, Index nu, Index index)
+    {
+        return index < nu ? inputs[index] : states[index - nu];
+    }
+
+    const PhysicalProblem &problem_;
+    std::vector<Eigen::MatrixXd> next_state_inverse_;
 };
 
 struct NaiveProblem
@@ -1005,6 +1481,16 @@ struct IpoptResult
     int iterations = -1;
 };
 
+struct NativeIpmResult
+{
+    Eigen::VectorXd primal;
+    Eigen::VectorXd multipliers;
+    Eigen::VectorXd parameters;
+    double elapsed_ms = std::numeric_limits<double>::quiet_NaN();
+    int status = -1;
+    int iterations = -1;
+};
+
 Eigen::VectorXd to_eigen(const VecRealAllocated &vector);
 
 class GlobalParameterTnlp final : public Ipopt::TNLP
@@ -1436,7 +1922,8 @@ IpoptResult solve_ipopt(const PhysicalProblem &problem)
         IpoptApplicationFactory();
     application->Options()->SetIntegerValue("print_level", 0);
     application->Options()->SetStringValue("sb", "yes");
-    application->Options()->SetStringValue("linear_solver", "mumps");
+    application->Options()->SetStringValue(
+        "linear_solver", problem.config.ipopt_linear_solver);
     application->Options()->SetStringValue("hessian_approximation", "exact");
     application->Options()->SetStringValue("nlp_scaling_method", "none");
     application->Options()->SetNumericValue("tol", 1e-10);
@@ -1451,14 +1938,23 @@ IpoptResult solve_ipopt(const PhysicalProblem &problem)
 
     auto *raw_problem = new GlobalParameterTnlp(problem);
     Ipopt::SmartPtr<Ipopt::TNLP> tnlp = raw_problem;
-    const auto start = std::chrono::steady_clock::now();
-    const Ipopt::ApplicationReturnStatus status =
-        application->OptimizeTNLP(tnlp);
-    const auto stop = std::chrono::steady_clock::now();
+    std::vector<double> elapsed;
+    elapsed.reserve(static_cast<std::size_t>(problem.config.repeats));
+    Ipopt::ApplicationReturnStatus status = Ipopt::Internal_Error;
+    for (Index repeat = 0; repeat < problem.config.repeats; ++repeat)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        status = application->OptimizeTNLP(tnlp);
+        const auto stop = std::chrono::steady_clock::now();
+        elapsed.push_back(
+            std::chrono::duration<double, std::milli>(stop - start).count());
+        if (status != Ipopt::Solve_Succeeded
+            && status != Ipopt::Solved_To_Acceptable_Level)
+            break;
+    }
 
     IpoptResult result;
-    result.elapsed_ms =
-        std::chrono::duration<double, std::milli>(stop - start).count();
+    result.elapsed_ms = median(elapsed);
     result.status = static_cast<int>(status);
     result.iterations = raw_problem->iterations();
     const Index npr = problem.info.number_of_primal_variables;
@@ -1475,6 +1971,51 @@ void assign(VecRealAllocated &target, const Eigen::VectorXd &source)
         throw std::runtime_error("Vector dimension mismatch");
     for (Index i = 0; i < target.m(); ++i)
         target(i) = source(i);
+}
+
+NativeIpmResult solve_native_ipm(const PhysicalProblem &problem)
+{
+    auto ocp = std::make_shared<PhysicalParametricOcp>(problem);
+    auto nlp = std::make_shared<fatrop::ParametricImplicitNlpOcp>(ocp);
+    fatrop::OptionRegistry options;
+    fatrop::IpAlgBuilder<ImplicitOcpType> builder(nlp);
+    auto algorithm = builder.with_options_registry(&options).build();
+    options.set_option("print_level", 0);
+    options.set_option("max_iter", 100);
+    options.set_option("tolerance", 1e-10);
+
+    NativeIpmResult result;
+    std::vector<double> elapsed;
+    elapsed.reserve(static_cast<std::size_t>(problem.config.repeats));
+    for (Index repeat = 0; repeat < problem.config.repeats; ++repeat)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const fatrop::IpSolverReturnFlag status = algorithm->optimize();
+        const auto stop = std::chrono::steady_clock::now();
+        elapsed.push_back(
+            std::chrono::duration<double, std::milli>(stop - start).count());
+        result.status = static_cast<int>(status);
+        result.iterations = static_cast<int>(algorithm->iteration_count());
+        if (status != fatrop::IpSolverReturnFlag::Success
+        && status != fatrop::IpSolverReturnFlag::StopAtAcceptablePoint)
+            break;
+    }
+    result.elapsed_ms = median(elapsed);
+
+    const ProblemInfo &info = algorithm->info();
+    const auto &solution = algorithm->solution_primal();
+    result.primal.resize(info.number_of_trajectory_variables);
+    result.parameters.resize(info.number_of_global_parameters);
+    result.multipliers.resize(info.number_of_eq_constraints);
+    for (Index row = 0; row < info.number_of_trajectory_variables; ++row)
+        result.primal(row) = solution(row);
+    for (Index row = 0; row < info.number_of_global_parameters; ++row)
+        result.parameters(row) =
+            solution(info.offset_primal_global + row);
+    const auto &multipliers = algorithm->solution_dual();
+    for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+        result.multipliers(row) = multipliers(row);
+    return result;
 }
 
 BorderedResult solve_normalized_bordered(
@@ -1597,6 +2138,174 @@ BorderedResult solve_normalized_bordered(
     const auto stop = std::chrono::steady_clock::now();
     result.elapsed_ms =
         std::chrono::duration<double, std::milli>(stop - start).count();
+    result.normalization_ms =
+        std::chrono::duration<double, std::milli>(
+            after_normalization - start)
+            .count();
+    result.factor_ms =
+        std::chrono::duration<double, std::milli>(
+            after_factor - after_normalization)
+            .count();
+    result.parameter_rhs_ms =
+        std::chrono::duration<double, std::milli>(
+            after_parameter_rhs - after_factor)
+            .count();
+    result.schur_ms =
+        std::chrono::duration<double, std::milli>(
+            stop - after_parameter_rhs)
+            .count();
+    return result;
+}
+
+BorderedResult solve_normalized_bordered_batch(
+    const PhysicalProblem &physical, NormalizedProblem &problem,
+    AugSystemSolver<OcpType> &solver)
+{
+    VecRealAllocated primal(problem.info.number_of_primal_variables);
+    VecRealAllocated multipliers(problem.info.number_of_eq_constraints);
+    Eigen::VectorXd base_primal(
+        problem.info.number_of_primal_variables);
+    Eigen::VectorXd base_multipliers(
+        problem.info.number_of_eq_constraints);
+    Eigen::MatrixXd response_primal(
+        problem.info.number_of_primal_variables,
+        problem.config.parameters);
+    Eigen::MatrixXd response_multipliers(
+        problem.info.number_of_eq_constraints,
+        problem.config.parameters);
+    Eigen::MatrixXd schur(problem.config.parameters,
+                          problem.config.parameters);
+    Eigen::VectorXd schur_rhs(problem.config.parameters);
+    BorderedResult result;
+    result.primal.resize(problem.info.number_of_primal_variables);
+    result.multipliers.resize(problem.info.number_of_eq_constraints);
+    result.parameters.resize(problem.config.parameters);
+    primal = 0.0;
+    multipliers = 0.0;
+
+    const auto start = std::chrono::steady_clock::now();
+    if (problem.config.problem == "synthetic" &&
+        problem.config.collocation_degree == 0)
+        problem.refresh(physical);
+    const auto after_normalization = std::chrono::steady_clock::now();
+    const auto factor_status =
+        solver.solve(problem.info, problem.jacobian, problem.hessian,
+                     problem.D_x, problem.D_s, problem.rhs_x,
+                     problem.rhs_g, primal, multipliers);
+    if (factor_status != LinsolReturnFlag::SUCCESS)
+        throw std::runtime_error(
+            "Blocked bordered factorization failed");
+
+    base_primal = to_eigen(primal);
+    base_multipliers = to_eigen(multipliers);
+    const auto after_factor = std::chrono::steady_clock::now();
+    if (problem.config.parameters == 0)
+    {
+        result.primal = base_primal;
+        result.multipliers =
+            problem.original_multipliers(base_multipliers);
+        const auto stop = std::chrono::steady_clock::now();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(
+                stop - start)
+                .count();
+        result.normalization_ms =
+            std::chrono::duration<double, std::milli>(
+                after_normalization - start)
+                .count();
+        result.factor_ms =
+            std::chrono::duration<double, std::milli>(
+                after_factor - after_normalization)
+                .count();
+        return result;
+    }
+
+    MatRealAllocated batch_primal_rhs(
+        problem.info.number_of_primal_variables,
+        problem.config.parameters);
+    MatRealAllocated batch_constraint_rhs(
+        problem.info.number_of_eq_constraints,
+        problem.config.parameters);
+    MatRealAllocated batch_primal(
+        problem.info.number_of_primal_variables,
+        problem.config.parameters);
+    MatRealAllocated batch_multipliers(
+        problem.info.number_of_eq_constraints,
+        problem.config.parameters);
+    for (Index column = 0;
+         column < problem.config.parameters; ++column)
+    {
+        for (Index row = 0;
+             row < problem.info.number_of_primal_variables; ++row)
+        {
+            batch_primal_rhs(row, column) =
+                problem.border_primal(row, column);
+        }
+        for (Index row = 0;
+             row < problem.info.number_of_eq_constraints; ++row)
+        {
+            batch_constraint_rhs(row, column) =
+                problem.border_constraints(row, column);
+        }
+    }
+    batch_primal = 0.0;
+    batch_multipliers = 0.0;
+    const auto status = solver.solve_rhs_batch(
+        problem.info, problem.jacobian, problem.hessian,
+        problem.D_s, batch_primal_rhs, batch_constraint_rhs,
+        batch_primal, batch_multipliers);
+    if (status != LinsolReturnFlag::SUCCESS)
+        throw std::runtime_error(
+            "Blocked bordered right-hand-side solve failed");
+    for (Index column = 0;
+         column < problem.config.parameters; ++column)
+    {
+        for (Index row = 0;
+             row < problem.info.number_of_primal_variables; ++row)
+        {
+            response_primal(row, column) =
+                batch_primal(row, column);
+        }
+        for (Index row = 0;
+             row < problem.info.number_of_eq_constraints; ++row)
+        {
+            response_multipliers(row, column) =
+                batch_multipliers(row, column);
+        }
+    }
+    const auto after_parameter_rhs = std::chrono::steady_clock::now();
+
+    schur =
+        problem.border_hessian +
+        problem.border_primal.transpose() * response_primal +
+        problem.border_constraints.transpose() *
+            response_multipliers;
+    schur_rhs =
+        -problem.rhs_parameters -
+        problem.border_primal.transpose() * base_primal -
+        problem.border_constraints.transpose() *
+            base_multipliers;
+    const Eigen::LDLT<Eigen::MatrixXd> ldlt(schur);
+    if (ldlt.info() != Eigen::Success)
+        throw std::runtime_error(
+            "Blocked dense parameter Schur factorization failed");
+    result.parameters = ldlt.solve(schur_rhs);
+    if (ldlt.info() != Eigen::Success)
+        throw std::runtime_error(
+            "Blocked dense parameter Schur solve failed");
+
+    result.primal =
+        base_primal + response_primal * result.parameters;
+    const Eigen::VectorXd normalized_multipliers =
+        base_multipliers +
+        response_multipliers * result.parameters;
+    result.multipliers =
+        problem.original_multipliers(normalized_multipliers);
+    const auto stop = std::chrono::steady_clock::now();
+    result.elapsed_ms =
+        std::chrono::duration<double, std::milli>(
+            stop - start)
+            .count();
     result.normalization_ms =
         std::chrono::duration<double, std::milli>(
             after_normalization - start)
@@ -1942,6 +2651,8 @@ Config parse_arguments(int argc, char **argv)
 
         if (argument == "--stages")
             config.stages = next_integer("--stages");
+        else if (argument == "--phases")
+            config.phases = next_integer("--phases");
         else if (argument == "--problem")
         {
             if (i + 1 >= argc)
@@ -1967,6 +2678,20 @@ Config parse_arguments(int argc, char **argv)
             config.identity_next_jacobian = true;
         else if (argument == "--ipopt")
             config.run_ipopt = true;
+        else if (argument == "--native-ipm")
+            config.run_native_ipm = true;
+        else if (argument == "--full-solvers")
+        {
+            config.run_native_ipm = true;
+            config.run_ipopt = true;
+        }
+        else if (argument == "--ipopt-linear-solver")
+        {
+            if (i + 1 >= argc)
+                throw std::runtime_error(
+                    "Missing value for --ipopt-linear-solver");
+            config.ipopt_linear_solver = argv[++i];
+        }
         else if (argument == "--no-dense-validation")
             config.dense_validation = false;
         else if (argument == "--help")
@@ -1974,7 +2699,8 @@ Config parse_arguments(int argc, char **argv)
             std::cout
                 << "Usage: global_parameter_kkt_benchmark [options]\n"
                 << "  --problem {synthetic|dtoc3}\n"
-                << "  --stages N\n"
+                << "  --stages N (total nodes across all phases)\n"
+                << "  --phases N\n"
                 << "  --nx N\n"
                 << "  --nu N\n"
                 << "  --parameters N\n"
@@ -1983,6 +2709,9 @@ Config parse_arguments(int argc, char **argv)
                 << "  --cross-hessian-scale VALUE (currently must be 0)\n"
                 << "  --identity-next-jacobian\n"
                 << "  --ipopt\n"
+                << "  --native-ipm\n"
+                << "  --full-solvers (enables both full NLP solvers)\n"
+                << "  --ipopt-linear-solver {mumps|ma57|...}\n"
                 << "  --no-dense-validation\n";
             std::exit(0);
         }
@@ -1994,12 +2723,17 @@ Config parse_arguments(int argc, char **argv)
         throw std::runtime_error("Unknown benchmark problem");
     if (config.problem == "dtoc3")
     {
+        if (config.phases != 1)
+            throw std::runtime_error(
+                "DTOC3 benchmark currently supports one phase");
         config.nx = 2;
         config.nu = 1;
         config.collocation_degree = 0;
         config.identity_next_jacobian = true;
     }
-    if (config.stages < 2 || config.nx < 1 || config.nu < 0 ||
+    if (config.stages < 2 || config.phases < 1 ||
+        config.stages < 2 * config.phases ||
+        config.nx < 1 || config.nu < 0 ||
         config.parameters < 0 || config.repeats < 1 ||
         config.cross_hessian_scale < 0.0 ||
         (config.collocation_degree != 0 &&
@@ -2025,6 +2759,8 @@ int main(int argc, char **argv)
         NormalizedProblem normalized(physical);
         NaiveProblem naive(physical);
         AugSystemSolver<OcpType> bordered_solver(normalized.info);
+        AugSystemSolver<OcpType> blocked_bordered_solver(
+            normalized.info);
         const bool use_explicit_naive =
             config.collocation_degree > 0 ||
             config.problem == "dtoc3";
@@ -2051,6 +2787,8 @@ int main(int argc, char **argv)
 
         // Untimed warm-up includes lazy code/data initialization.
         (void)solve_normalized_bordered(physical, normalized, bordered_solver);
+        (void)solve_normalized_bordered_batch(
+            physical, normalized, blocked_bordered_solver);
         if (use_explicit_naive)
             (void)solve_explicit_naive(
                 *explicit_naive, *explicit_naive_solver);
@@ -2062,13 +2800,20 @@ int main(int argc, char **argv)
         std::vector<double> factor_times;
         std::vector<double> parameter_rhs_times;
         std::vector<double> schur_times;
+        std::vector<double> blocked_bordered_times;
+        std::vector<double> blocked_parameter_rhs_times;
         std::vector<double> naive_times;
         BorderedResult bordered_result;
+        BorderedResult blocked_bordered_result;
         NaiveResult naive_result;
         for (Index repeat = 0; repeat < config.repeats; ++repeat)
         {
             bordered_result =
                 solve_normalized_bordered(physical, normalized, bordered_solver);
+            blocked_bordered_result =
+                solve_normalized_bordered_batch(
+                    physical, normalized,
+                    blocked_bordered_solver);
             if (use_explicit_naive)
                 naive_result = solve_explicit_naive(
                     *explicit_naive, *explicit_naive_solver);
@@ -2082,6 +2827,10 @@ int main(int argc, char **argv)
             parameter_rhs_times.push_back(
                 bordered_result.parameter_rhs_ms);
             schur_times.push_back(bordered_result.schur_ms);
+            blocked_bordered_times.push_back(
+                blocked_bordered_result.elapsed_ms);
+            blocked_parameter_rhs_times.push_back(
+                blocked_bordered_result.parameter_rhs_ms);
             naive_times.push_back(naive_result.elapsed_ms);
         }
 
@@ -2095,8 +2844,19 @@ int main(int argc, char **argv)
             max_abs(bordered_result.multipliers - naive_physical_multipliers);
         const double parameter_difference =
             max_abs(bordered_result.parameters - naive_result.parameters);
+        const double blocked_primal_difference =
+            max_abs(blocked_bordered_result.primal -
+                    bordered_result.primal);
+        const double blocked_multiplier_difference =
+            max_abs(blocked_bordered_result.multipliers -
+                    bordered_result.multipliers);
+        const double blocked_parameter_difference =
+            max_abs(blocked_bordered_result.parameters -
+                    bordered_result.parameters);
         const double bordered_kkt_residual =
             bordered_residual(physical, bordered_result);
+        const double blocked_bordered_kkt_residual =
+            bordered_residual(physical, blocked_bordered_result);
         const double bordered_objective =
             objective_value(physical, bordered_result);
         const double naive_kkt_residual =
@@ -2113,7 +2873,28 @@ int main(int argc, char **argv)
         const double factor_ms = median(factor_times);
         const double parameter_rhs_ms = median(parameter_rhs_times);
         const double schur_ms = median(schur_times);
+        const double blocked_bordered_ms =
+            median(blocked_bordered_times);
+        const double blocked_parameter_rhs_ms =
+            median(blocked_parameter_rhs_times);
         const double naive_ms = median(naive_times);
+        NativeIpmResult native_ipm_result;
+        double native_ipm_primal_difference =
+            std::numeric_limits<double>::quiet_NaN();
+        double native_ipm_multiplier_difference =
+            std::numeric_limits<double>::quiet_NaN();
+        double native_ipm_parameter_difference =
+            std::numeric_limits<double>::quiet_NaN();
+        if (config.run_native_ipm)
+        {
+            native_ipm_result = solve_native_ipm(physical);
+            native_ipm_primal_difference = max_abs(
+                bordered_result.primal - native_ipm_result.primal);
+            native_ipm_multiplier_difference = max_abs(
+                bordered_result.multipliers - native_ipm_result.multipliers);
+            native_ipm_parameter_difference = max_abs(
+                bordered_result.parameters - native_ipm_result.parameters);
+        }
         IpoptResult ipopt_result;
         double ipopt_primal_difference =
             std::numeric_limits<double>::quiet_NaN();
@@ -2136,40 +2917,79 @@ int main(int argc, char **argv)
 
         std::cout << std::setprecision(12);
         std::cout
-            << "problem,transcription,collocation_degree,stages,nx,nu,"
+            << "problem,transcription,collocation_degree,stages,phases,"
+               "integration_transitions,linkage_transitions,nx,nu,"
                "parameters,"
                "base_primal,base_constraints,"
                "naive_primal,naive_constraints,bordered_ms,"
                "normalization_ms,factor_ms,parameter_rhs_ms,schur_ms,"
+               "blocked_bordered_ms,blocked_parameter_rhs_ms,"
+               "sequential_over_blocked,"
+               "parameter_rhs_sequential_over_blocked,"
                "naive_ms,"
                "naive_over_bordered,bordered_objective,"
-               "bordered_residual,naive_residual,"
+               "bordered_residual,blocked_bordered_residual,naive_residual,"
                "primal_difference,multiplier_difference,parameter_difference,"
+               "blocked_primal_difference,blocked_multiplier_difference,"
+               "blocked_parameter_difference,"
                "parameter_consensus,dense_reference_difference,"
-               "ipopt_ms,ipopt_status,ipopt_iterations,"
+               "native_ipm_ms,native_ipm_status,native_ipm_iterations,"
+               "native_ipm_primal_difference,"
+               "native_ipm_multiplier_difference,"
+               "native_ipm_parameter_difference,"
+               "ipopt_linear_solver,ipopt_ms,ipopt_status,ipopt_iterations,"
                "ipopt_primal_difference,ipopt_multiplier_difference,"
-               "ipopt_parameter_difference\n";
+               "ipopt_parameter_difference,ipopt_over_native_ipm\n";
         std::cout
             << config.problem << ','
             << (config.collocation_degree > 0 ? "radau" : "shooting")
             << ',' << config.collocation_degree << ',' << config.stages
-            << ',' << config.nx << ',' << config.nu << ','
+            << ',' << config.phases << ','
+            << config.stages - config.phases << ','
+            << config.phases - 1 << ','
+            << config.nx << ',' << config.nu << ','
             << config.parameters << ',' << physical.info.number_of_primal_variables
             << ',' << physical.info.number_of_eq_constraints << ','
             << naive.info.number_of_primal_variables << ','
             << naive.info.number_of_eq_constraints << ',' << bordered_ms << ','
             << normalization_ms << ',' << factor_ms << ','
             << parameter_rhs_ms << ',' << schur_ms << ','
+            << blocked_bordered_ms << ','
+            << blocked_parameter_rhs_ms << ','
+            << bordered_ms / blocked_bordered_ms << ','
+            << (blocked_parameter_rhs_ms > 0.0
+                    ? parameter_rhs_ms /
+                          blocked_parameter_rhs_ms
+                    : 1.0)
+            << ','
             << naive_ms << ',' << naive_ms / bordered_ms << ','
             << bordered_objective << ',' << bordered_kkt_residual << ','
+            << blocked_bordered_kkt_residual << ','
             << naive_kkt_residual << ','
             << primal_difference << ',' << multiplier_difference << ','
-            << parameter_difference << ',' << naive_result.parameter_consensus
-            << ',' << dense_error << ',' << ipopt_result.elapsed_ms << ','
+            << parameter_difference << ','
+            << blocked_primal_difference << ','
+            << blocked_multiplier_difference << ','
+            << blocked_parameter_difference << ','
+            << naive_result.parameter_consensus
+            << ',' << dense_error << ','
+            << native_ipm_result.elapsed_ms << ','
+            << native_ipm_result.status << ','
+            << native_ipm_result.iterations << ','
+            << native_ipm_primal_difference << ','
+            << native_ipm_multiplier_difference << ','
+            << native_ipm_parameter_difference << ','
+            << config.ipopt_linear_solver
+            << ',' << ipopt_result.elapsed_ms << ','
             << ipopt_result.status << ',' << ipopt_result.iterations << ','
             << ipopt_primal_difference << ','
             << ipopt_multiplier_difference << ','
-            << ipopt_parameter_difference << '\n';
+            << ipopt_parameter_difference << ','
+            << (config.run_native_ipm && config.run_ipopt
+                    ? ipopt_result.elapsed_ms /
+                          native_ipm_result.elapsed_ms
+                    : std::numeric_limits<double>::quiet_NaN())
+            << '\n';
 
         const double tolerance = 5e-7;
         const bool ipopt_status_ok =
@@ -2183,11 +3003,28 @@ int main(int argc, char **argv)
             (ipopt_primal_difference <= tolerance &&
              ipopt_multiplier_difference <= tolerance &&
              ipopt_parameter_difference <= tolerance);
-        if (bordered_kkt_residual > tolerance || naive_kkt_residual > tolerance ||
+        const bool native_ipm_status_ok =
+            !config.run_native_ipm ||
+            native_ipm_result.status ==
+                static_cast<int>(fatrop::IpSolverReturnFlag::Success) ||
+            native_ipm_result.status == static_cast<int>(
+                fatrop::IpSolverReturnFlag::StopAtAcceptablePoint);
+        const bool native_ipm_solution_ok =
+            !config.run_native_ipm ||
+            (native_ipm_primal_difference <= tolerance &&
+             native_ipm_multiplier_difference <= tolerance &&
+             native_ipm_parameter_difference <= tolerance);
+        if (bordered_kkt_residual > tolerance ||
+            blocked_bordered_kkt_residual > tolerance ||
+            naive_kkt_residual > tolerance ||
             primal_difference > tolerance || multiplier_difference > tolerance ||
             parameter_difference > tolerance ||
+            blocked_primal_difference > tolerance ||
+            blocked_multiplier_difference > tolerance ||
+            blocked_parameter_difference > tolerance ||
             naive_result.parameter_consensus > tolerance ||
             (std::isfinite(dense_error) && dense_error > tolerance) ||
+            !native_ipm_status_ok || !native_ipm_solution_ok ||
             !ipopt_status_ok || !ipopt_solution_ok)
         {
             std::cerr << "Validation failed; tolerance=" << tolerance << '\n';

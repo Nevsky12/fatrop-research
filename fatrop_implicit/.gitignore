@@ -36,6 +36,8 @@ output.txt
 
 *build/
 /build-research/
+/build-*/
+/tmp/
 release/
 CMakeLists.txt.user
 CMakeCache.txt

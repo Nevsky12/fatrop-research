@@ -128,6 +128,78 @@ namespace fatrop
             }
         }
 
+        TEST(PermutationMatrixTest, ApplyInverseOnRowsWithOffset)
+        {
+            const Index permutation_size = 4;
+            const Index row_offset = 1;
+            const Index rows = 6;
+            const Index columns = 3;
+            PermutationMatrix perm(permutation_size);
+            perm[0] = 2;
+            perm[1] = 3;
+            perm[2] = 3;
+
+            MatRealAllocated matrix(rows, columns);
+            MatRealAllocated original(rows, columns);
+            for (Index row = 0; row < rows; ++row)
+            {
+                for (Index column = 0; column < columns; ++column)
+                {
+                    const Scalar value =
+                        static_cast<Scalar>(10 * row + column);
+                    matrix(row, column) = value;
+                    original(row, column) = value;
+                }
+            }
+
+            perm.apply_on_rows(
+                3, &matrix.mat(), row_offset, columns);
+            perm.apply_inverse_on_rows(
+                3, &matrix.mat(), row_offset);
+
+            for (Index row = 0; row < rows; ++row)
+                for (Index column = 0; column < columns; ++column)
+                    EXPECT_DOUBLE_EQ(
+                        original(row, column),
+                        matrix(row, column));
+        }
+
+        TEST(PermutationMatrixTest, ApplyInverseOnColsWithOffset)
+        {
+            const Index permutation_size = 4;
+            const Index column_offset = 1;
+            const Index rows = 3;
+            const Index columns = 6;
+            PermutationMatrix perm(permutation_size);
+            perm[0] = 2;
+            perm[1] = 3;
+            perm[2] = 3;
+
+            MatRealAllocated matrix(rows, columns);
+            MatRealAllocated original(rows, columns);
+            for (Index row = 0; row < rows; ++row)
+            {
+                for (Index column = 0; column < columns; ++column)
+                {
+                    const Scalar value =
+                        static_cast<Scalar>(10 * row + column);
+                    matrix(row, column) = value;
+                    original(row, column) = value;
+                }
+            }
+
+            perm.apply_on_cols(
+                3, &matrix.mat(), 0, column_offset, rows);
+            perm.apply_inverse_on_cols(
+                3, &matrix.mat(), column_offset);
+
+            for (Index row = 0; row < rows; ++row)
+                for (Index column = 0; column < columns; ++column)
+                    EXPECT_DOUBLE_EQ(
+                        original(row, column),
+                        matrix(row, column));
+        }
+
         TEST(PermutationMatrixTest, LargePermutation)
         {
             // Test a larger permutation to ensure it works for non-trivial cases

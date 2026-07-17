@@ -10,6 +10,7 @@
 #include "fatrop/ocp/jacobian.hpp"
 #include "fatrop/ocp/problem_info.hpp" //inherit
 #include "fatrop/ocp/type.hpp"
+#include <cmath>
 #include <gtest/gtest.h>
 #include <vector>
 #include <iostream>
@@ -803,6 +804,253 @@ TEST_F(AugSystemSolverTest, TestSolve)
     }
 }
 
+TEST_F(AugSystemSolverTest, TestSolveRhsBatchMatchesScalarSolves)
+{
+    const auto factor_status =
+        solver.solve(
+            info, jacobian, hessian, D_x, D_s,
+            rhs_x, rhs_g, x, mult);
+    ASSERT_EQ(factor_status, LinsolReturnFlag::SUCCESS);
+
+    constexpr Index right_hand_sides = 3;
+    MatRealAllocated batch_f(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated batch_g(
+        info.number_of_eq_constraints, right_hand_sides);
+    MatRealAllocated batch_x(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated batch_mult(
+        info.number_of_eq_constraints, right_hand_sides);
+    MatRealAllocated scalar_x(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated scalar_mult(
+        info.number_of_eq_constraints, right_hand_sides);
+
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0;
+             row < info.number_of_primal_variables; ++row)
+        {
+            batch_f(row, column) =
+                0.03 * static_cast<Scalar>(row + 1) -
+                0.07 * static_cast<Scalar>(column + 1);
+        }
+        for (Index row = 0;
+             row < info.number_of_eq_constraints; ++row)
+        {
+            batch_g(row, column) =
+                -0.02 * static_cast<Scalar>(row + 1) +
+                0.05 * static_cast<Scalar>(column + 1);
+        }
+    }
+
+    VecRealAllocated column_f(info.number_of_primal_variables);
+    VecRealAllocated column_g(info.number_of_eq_constraints);
+    VecRealAllocated column_x(info.number_of_primal_variables);
+    VecRealAllocated column_mult(info.number_of_eq_constraints);
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0;
+             row < info.number_of_primal_variables; ++row)
+            column_f(row) = batch_f(row, column);
+        for (Index row = 0;
+             row < info.number_of_eq_constraints; ++row)
+            column_g(row) = batch_g(row, column);
+        column_x = 0.0;
+        column_mult = 0.0;
+        const auto status = solver.solve_rhs(
+            info, jacobian, hessian, D_s,
+            column_f, column_g, column_x, column_mult);
+        ASSERT_EQ(status, LinsolReturnFlag::SUCCESS);
+        for (Index row = 0;
+             row < info.number_of_primal_variables; ++row)
+            scalar_x(row, column) = column_x(row);
+        for (Index row = 0;
+             row < info.number_of_eq_constraints; ++row)
+            scalar_mult(row, column) = column_mult(row);
+    }
+
+    batch_x = 0.0;
+    batch_mult = 0.0;
+    const auto batch_status = solver.solve_rhs_batch(
+        info, jacobian, hessian, D_s,
+        batch_f, batch_g, batch_x, batch_mult);
+    ASSERT_EQ(batch_status, LinsolReturnFlag::SUCCESS);
+
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0;
+             row < info.number_of_primal_variables; ++row)
+        {
+            EXPECT_NEAR(
+                scalar_x(row, column),
+                batch_x(row, column),
+                2e-9 *
+                    (1.0 + std::abs(scalar_x(row, column))));
+        }
+        for (Index row = 0;
+             row < info.number_of_eq_constraints; ++row)
+        {
+            EXPECT_NEAR(
+                scalar_mult(row, column),
+                batch_mult(row, column),
+                2e-9 *
+                    (1.0 + std::abs(
+                               scalar_mult(row, column))));
+        }
+    }
+}
+
+TEST(
+    ImplicitAugSystemSolverRegressionTest,
+    RepeatedRankDeficientRhsIsStable)
+{
+    const std::vector<Index> nx{2, 2, 2, 2};
+    const std::vector<Index> nu{1, 1, 1, 0};
+    const std::vector<Index> ng{0, 0, 0, 0};
+    const std::vector<Index> ng_ineq{0, 0, 0, 0};
+    const ProblemDims dims{4, nu, nx, ng, ng_ineq};
+    const ProblemInfo info{dims};
+    Jacobian<ImplicitOcpType> jacobian{dims};
+    Hessian<ImplicitOcpType> hessian{dims};
+    VecRealAllocated D_x(
+        info.number_of_primal_variables);
+    VecRealAllocated D_s(
+        info.number_of_slack_variables);
+    VecRealAllocated factor_f(
+        info.number_of_primal_variables);
+    VecRealAllocated factor_g(
+        info.number_of_eq_constraints);
+    VecRealAllocated factor_x(
+        info.number_of_primal_variables);
+    VecRealAllocated factor_mult(
+        info.number_of_eq_constraints);
+    D_x = 0.0;
+    D_s = 0.0;
+    factor_f = 0.0;
+    factor_g = 0.0;
+    factor_x = 0.0;
+    factor_mult = 0.0;
+
+    for (Index stage = 0; stage < dims.K; ++stage)
+    {
+        const Index variables = nu[stage] + nx[stage];
+        hessian.RSQrqt[stage] = 0.0;
+        for (Index variable = 0;
+             variable < variables; ++variable)
+        {
+            hessian.RSQrqt[stage](
+                variable, variable) =
+                3.0 +
+                0.1 * static_cast<Scalar>(variable);
+        }
+        if (stage + 1 < dims.K)
+        {
+            jacobian.Jt[stage] = 0.0;
+            jacobian.BAbt[stage] = 0.0;
+            jacobian.Jt[stage](0, 0) = -1.0;
+            jacobian.BAbt[stage](0, 0) = 0.2;
+            jacobian.BAbt[stage](1, 0) = 0.8;
+            jacobian.BAbt[stage](0, 1) = 1.0;
+            jacobian.BAbt[stage](2, 1) = 0.1;
+        }
+    }
+    for (Index row = 0;
+         row < info.number_of_primal_variables; ++row)
+        factor_f(row) =
+            0.03 * static_cast<Scalar>(row + 1);
+    for (Index row = 0;
+         row < info.number_of_eq_constraints; ++row)
+        factor_g(row) =
+            -0.02 * static_cast<Scalar>(row + 1);
+
+    AugSystemSolver<ImplicitOcpType> solver{info};
+    solver.set_lu_fact_tol(1e-10);
+    const auto factor_status = solver.solve(
+        info, jacobian, hessian,
+        D_x, D_s, factor_f, factor_g,
+        factor_x, factor_mult);
+    ASSERT_EQ(
+        factor_status, LinsolReturnFlag::SUCCESS);
+    for (Index rank : jacobian.J_ranks)
+        ASSERT_EQ(rank, 1);
+
+    VecRealAllocated rhs_f(
+        info.number_of_primal_variables);
+    VecRealAllocated rhs_g(
+        info.number_of_eq_constraints);
+    VecRealAllocated first_x(
+        info.number_of_primal_variables);
+    VecRealAllocated first_mult(
+        info.number_of_eq_constraints);
+    VecRealAllocated second_x(
+        info.number_of_primal_variables);
+    VecRealAllocated second_mult(
+        info.number_of_eq_constraints);
+    for (Index row = 0;
+         row < info.number_of_primal_variables; ++row)
+        rhs_f(row) =
+            -0.04 * static_cast<Scalar>(row + 1);
+    for (Index row = 0;
+         row < info.number_of_eq_constraints; ++row)
+        rhs_g(row) =
+            0.025 * static_cast<Scalar>(row + 1);
+    first_x = 0.0;
+    first_mult = 0.0;
+    second_x = 0.0;
+    second_mult = 0.0;
+
+    ASSERT_EQ(
+        solver.solve_rhs(
+            info, jacobian, hessian, D_s,
+            rhs_f, rhs_g, first_x, first_mult),
+        LinsolReturnFlag::SUCCESS);
+    ASSERT_EQ(
+        solver.solve_rhs(
+            info, jacobian, hessian, D_s,
+            rhs_f, rhs_g, second_x, second_mult),
+        LinsolReturnFlag::SUCCESS);
+
+    for (Index row = 0;
+         row < info.number_of_primal_variables; ++row)
+        EXPECT_NEAR(first_x(row), second_x(row), 1e-11);
+    for (Index row = 0;
+         row < info.number_of_eq_constraints; ++row)
+        EXPECT_NEAR(
+            first_mult(row), second_mult(row), 1e-11);
+
+    VecRealAllocated stationarity(
+        info.number_of_primal_variables);
+    VecRealAllocated constraints(
+        info.number_of_eq_constraints);
+    VecRealAllocated scratch_primal(
+        info.number_of_primal_variables);
+    VecRealAllocated scratch_constraints(
+        info.number_of_eq_constraints);
+    stationarity = 0.0;
+    constraints = 0.0;
+    scratch_primal = 0.0;
+    scratch_constraints = 0.0;
+    hessian.apply_on_right(
+        info, second_x, 0.0,
+        scratch_primal, stationarity);
+    stationarity =
+        stationarity + D_x * second_x + rhs_f;
+    jacobian.transpose_apply_on_right(
+        info, second_mult, 1.0,
+        stationarity, stationarity);
+    jacobian.apply_on_right(
+        info, second_x, 0.0,
+        scratch_constraints, constraints);
+    constraints = constraints + rhs_g;
+    for (Index row = 0;
+         row < info.number_of_primal_variables; ++row)
+        EXPECT_NEAR(stationarity(row), 0.0, 2e-9);
+    for (Index row = 0;
+         row < info.number_of_eq_constraints; ++row)
+        EXPECT_NEAR(constraints(row), 0.0, 2e-9);
+}
+
 
 // TEST_F(AugSystemSolverTest, TestSolveRhs)
 // {
@@ -903,6 +1151,184 @@ TEST_F(AugSystemSolverTest, TestSolve)
 //     }
 // }
 
+
+static void CheckUnstabilizedFullRankBatch(
+    const Index right_hand_sides)
+{
+    constexpr Index stages = 4;
+    const std::vector<Index> nx{2, 2, 2, 2};
+    const std::vector<Index> nu{1, 1, 1, 0};
+    const std::vector<Index> ng{0, 0, 0, 0};
+    const std::vector<Index> ng_ineq{0, 0, 0, 0};
+    const ProblemDims dims(stages, nu, nx, ng, ng_ineq);
+    const ProblemInfo info(dims);
+    Jacobian<ImplicitOcpType> jacobian(dims);
+    Hessian<ImplicitOcpType> hessian(dims);
+
+    for (Index stage = 0; stage < stages; ++stage)
+    {
+        const Index variables = nu[stage] + nx[stage];
+        hessian.RSQrqt[stage] = 0.0;
+        for (Index variable = 0; variable < variables; ++variable)
+            hessian.RSQrqt[stage](variable, variable) =
+                2.5 + 0.2 * stage + 0.1 * variable;
+        if (stage + 1 == stages)
+            continue;
+
+        jacobian.BAbt[stage] = 0.0;
+        jacobian.Jt[stage] = 0.0;
+        hessian.FuFx[stage] = 0.0;
+        hessian.GuGx[stage] = 0.0;
+        for (Index variable = 0; variable < variables; ++variable)
+        for (Index equation = 0; equation < nx[stage + 1]; ++equation)
+            jacobian.BAbt[stage](variable, equation) =
+                0.03 * (1 + ((variable + 2 * equation + stage) % 5));
+        jacobian.Jt[stage](0, 0) = 0.15 + 0.01 * stage;
+        jacobian.Jt[stage](0, 1) = 1.10;
+        jacobian.Jt[stage](1, 0) = 0.95;
+        jacobian.Jt[stage](1, 1) = 0.20 + 0.02 * stage;
+    }
+
+    VecRealAllocated D_x(info.number_of_primal_variables);
+    VecRealAllocated D_s(info.number_of_slack_variables);
+    VecRealAllocated factor_f(info.number_of_primal_variables);
+    VecRealAllocated factor_g(info.number_of_eq_constraints);
+    VecRealAllocated factor_x(info.number_of_primal_variables);
+    VecRealAllocated factor_multipliers(info.number_of_eq_constraints);
+    for (Index row = 0; row < info.number_of_primal_variables; ++row)
+    {
+        D_x(row) = 0.15 + 0.01 * (row % 4);
+        factor_f(row) = 0.04 * (row + 1);
+    }
+    D_s = 0.0;
+    for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+        factor_g(row) = -0.025 * (row + 1);
+    factor_x = 0.0;
+    factor_multipliers = 0.0;
+
+    AugSystemSolver<ImplicitOcpType> solver(info);
+    solver.set_lu_fact_tol(1e-12);
+    ASSERT_EQ(
+        solver.solve(
+            info, jacobian, hessian, D_x, D_s,
+            factor_f, factor_g, factor_x, factor_multipliers),
+        LinsolReturnFlag::SUCCESS);
+    ASSERT_TRUE(solver.using_normalized_explicit_fast_path());
+    for (const Index rank : jacobian.J_ranks)
+        ASSERT_EQ(rank, 2);
+
+    MatRealAllocated batch_f(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated batch_g(
+        info.number_of_eq_constraints, right_hand_sides);
+    MatRealAllocated batch_x(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated batch_multipliers(
+        info.number_of_eq_constraints, right_hand_sides);
+    MatRealAllocated scalar_x(
+        info.number_of_primal_variables, right_hand_sides);
+    MatRealAllocated scalar_multipliers(
+        info.number_of_eq_constraints, right_hand_sides);
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            batch_f(row, column) =
+                0.035 * (row + 1) - 0.08 * (column + 1);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            batch_g(row, column) =
+                -0.02 * (row + 1) + 0.045 * (column + 1);
+    }
+
+    VecRealAllocated column_f(info.number_of_primal_variables);
+    VecRealAllocated column_g(info.number_of_eq_constraints);
+    VecRealAllocated column_x(info.number_of_primal_variables);
+    VecRealAllocated column_multipliers(info.number_of_eq_constraints);
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            column_f(row) = batch_f(row, column);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            column_g(row) = batch_g(row, column);
+        column_x = 0.0;
+        column_multipliers = 0.0;
+        ASSERT_EQ(
+            solver.solve_rhs(
+                info, jacobian, hessian, D_s,
+                column_f, column_g, column_x, column_multipliers),
+            LinsolReturnFlag::SUCCESS);
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            scalar_x(row, column) = column_x(row);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            scalar_multipliers(row, column) = column_multipliers(row);
+    }
+
+    batch_x = 0.0;
+    batch_multipliers = 0.0;
+    ASSERT_EQ(
+        solver.solve_rhs_batch(
+            info, jacobian, hessian, D_s,
+            batch_f, batch_g, batch_x, batch_multipliers),
+        LinsolReturnFlag::SUCCESS);
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            EXPECT_NEAR(
+                batch_x(row, column), scalar_x(row, column), 2e-9);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            EXPECT_NEAR(
+                batch_multipliers(row, column),
+                scalar_multipliers(row, column), 2e-9);
+    }
+
+    VecRealAllocated residual_primal(info.number_of_primal_variables);
+    VecRealAllocated residual_constraints(info.number_of_eq_constraints);
+    VecRealAllocated column_solution(info.number_of_primal_variables);
+    VecRealAllocated column_multipliers_check(info.number_of_eq_constraints);
+    VecRealAllocated scratch_primal(info.number_of_primal_variables);
+    VecRealAllocated scratch_constraints(info.number_of_eq_constraints);
+    for (Index column = 0; column < right_hand_sides; ++column)
+    {
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            column_solution(row) = batch_x(row, column);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            column_multipliers_check(row) =
+                batch_multipliers(row, column);
+        residual_primal = 0.0;
+        residual_constraints = 0.0;
+        scratch_primal = 0.0;
+        scratch_constraints = 0.0;
+        hessian.apply_on_right(
+            info, column_solution, 0.0,
+            scratch_primal, residual_primal);
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            residual_primal(row) +=
+                D_x(row) * column_solution(row) + batch_f(row, column);
+        jacobian.transpose_apply_on_right(
+            info, column_multipliers_check, 1.0,
+            residual_primal, residual_primal);
+        jacobian.apply_on_right(
+            info, column_solution, 0.0,
+            scratch_constraints, residual_constraints);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            residual_constraints(row) += batch_g(row, column);
+        for (Index row = 0; row < info.number_of_primal_variables; ++row)
+            EXPECT_NEAR(residual_primal(row), 0.0, 3e-9);
+        for (Index row = 0; row < info.number_of_eq_constraints; ++row)
+            EXPECT_NEAR(residual_constraints(row), 0.0, 3e-9);
+    }
+}
+
+TEST(ImplicitAugSystemSolverBatchTest,
+     SmallNormalizedBatchMatchesScalarRhsSolves)
+{
+    CheckUnstabilizedFullRankBatch(3);
+}
+
+TEST(ImplicitAugSystemSolverBatchTest,
+     BlockedNormalizedBatchMatchesScalarRhsSolves)
+{
+    CheckUnstabilizedFullRankBatch(6);
+}
 
 // TEST_F(ImplicitAugSystemSolverTest, TestSolve)
 // {

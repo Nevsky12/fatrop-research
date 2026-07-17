@@ -1,6 +1,6 @@
 # Статьи и материалы по структурным солверам оптимального управления
 
-Снимок литературы и локальных находок, собранных в ходе сессии 16 июля
+Снимок литературы и локальных находок, собранных в ходе сессии 16–17 июля
 2026 года. Это не исчерпывающий обзор всей области, а тематический указатель
 именно по обсуждавшимся вопросам:
 
@@ -37,12 +37,19 @@
    части плюс плотный Schur complement по глобальным переменным.
 
 4. **Само по себе “добавить глобальные параметры в Riccati” уже недостаточно
-   для заявления научной новизны.** К июлю 2026 года существуют как минимум
-   параметризованная equality-constrained Riccati-рекурсия Martinez et al.
-   (2026) и block-tridiagonal-arrow backend PIQP для multistage QP с глобальными
-   переменными.
+   для заявления научной новизны.** К июлю 2026 года Sousa-Pinto–Orban уже
+   включают одинарный global cross-stage vector в полный regularized
+   primal-dual IPM; Martinez et al. дают параметризованную
+   equality-constrained recursion, а PIQP — block-tridiagonal-arrow backend с
+   global variables.
 
-5. Потенциально новая и практически ценная работа должна объединять более
+5. **Локальные linking variables/constraints в arrowhead KKT также уже prior
+   art.** Rehfeldt et al. (2022) выводят разреженный Schur complement для
+   связей соседних блоков, а Kempke–Rehfeldt–Koch (2026) строят точную
+   иерархическую Schur-факторизацию и прямо отмечают расширение на несколько
+   соседних блоков.
+
+6. Потенциально новая и практически ценная работа должна объединять более
    сильный набор свойств: нелинейный primal-dual IPM/SQP, точный
    неопределённый Hessian, stage constraints, произвольные ограничения на
    глобальные параметры, неявную прямую коллокацию и линейную по горизонту
@@ -150,10 +157,15 @@ arXiv:2509.16370, версия 6 от 15 июня 2026.** **[preprint]**
 - Даёт: последовательную `O(N)` и параллельную `O(log N)` Riccati-рекурсии для
   dual-regularized LQR-подзадач primal-dual IPM, stagewise equalities и
   inequalities без требований полного ранга к Jacobian constraints.
+- Раздел о **cross-stage variables** вводит один оптимизируемый вектор `theta`,
+  существующий в единственном экземпляре и входящий в callbacks многих стадий.
+  После `p+1` Riccati solves решается плотный Schur complement по `theta` с
+  добавочной стоимостью `O(p^3)`.
 - Особенно полезна для вопроса о робастной inertia correction при точном
   неопределённом Hessian.
-- Граница: рассматривается discrete-time multiple shooting; глобальный
-  параметрический border и прямая коллокация не являются главным предметом.
+- Граница: рассматривается discrete-time multiple shooting и один общий
+  глобальный scope; иерархия phase/interface/segment scopes и прямая
+  коллокация не являются предметом статьи.
 
 ### 1.7. IPOPT как generic sparse NLP baseline
 
@@ -315,8 +327,10 @@ Systems.” arXiv:2102.02065, 2021.** **[preprint]**
 
 - [arXiv](https://arxiv.org/abs/2102.02065)
 - Даёт: Riccati-type structured Newton method, где switching instants являются
-  глобальными оптимизируемыми величинами; заявлена `O(N)` сложность.
-- Это ещё один prior-art пример глобальных переменных специального вида.
+  one-copy оптимизируемыми величинами, встроенными в специальные граничные
+  Riccati-шаги; заявлена `O(N)` сложность.
+- Это близкий prior-art для интерфейсной переменной, действующей около границы
+  режимов, а не только для полностью глобального border.
 
 **S. Katayama, T. Ohtsuka.  
 “Structure-Exploiting Newton-Type Method for Optimal Control of Switched
@@ -352,7 +366,67 @@ Frontiers of Optimization for Robotics Workshop, 2026.**
 - [PDF](https://openreview.net/pdf?id=p8mJ3I0PSW)
 - Даёт: параллельную реализацию той же block-tridiagonal-arrow идеи.
 
-### 3.4. Общий nonlinear block-structured NLP с общими переменными
+### 3.4. Arrowhead IPM с локальными linking blocks
+
+**D. Rehfeldt, H. Hobbie, D. Schönheit, T. Koch, D. Möst, A. Gleixner.
+“A Massively Parallel Interior-Point Solver for LPs with Generalized
+Arrowhead Structure, and Applications to Energy System Models.” European
+Journal of Operational Research, 296(1):60–71, 2022.** **[journal]**
+
+- [DOI](https://doi.org/10.1016/j.ejor.2021.06.063)
+- Даёт: primal-dual IPM и Schur decomposition для doubly-bordered
+  block-diagonal LP; большинство linking constraints связывает два соседних
+  блока, что после перестановки даёт doubly-bordered block-tridiagonal Schur
+  complement и линейный рост числа ненулей.
+- Статья отдельно замечает, что аналогичная структура возникает для linking
+  variables, связывающих два блока. Это прямой generic precedent для
+  interface-scoped переменных.
+
+**N.-C. Kempke, D. Rehfeldt, T. Koch.
+“A Massively Parallel Interior-Point Method for Arrowhead Linear Programs
+with Local Linking Structure.” SIAM Journal on Scientific Computing,
+48(3):B360–B385, 2026.** **[journal]**
+
+- [DOI](https://doi.org/10.1137/24M1716288)
+- [arXiv](https://arxiv.org/abs/2412.07731)
+- Даёт: exact hierarchical Schur-complement factorization в PIPS-IPM++ для
+  linking constraints, действующих на несколько последовательных блоков.
+- Авторы прямо отмечают, что multiple-adjacent-block constraints и локальность
+  linking variables обрабатываются аналогично и что схема естественно
+  переносится на structured nonlinear programs.
+- Важная граница для нашей гипотезы: локальность border, иерархический Schur и
+  линейное масштабирование сами по себе уже не новы. В PIPS локальные linking
+  variables при этом не реализованы, а произвольная система перекрывающихся
+  interval-support blocks, OCP Riccati leaves и implicit collocation не
+  являются предметом экспериментов.
+
+### 3.5. Interval-scoped Riccati — текущая исследовательская гипотеза
+
+**“Interval-Scoped Riccati Factorization.”** **[repository material / research
+hypothesis]**
+
+- [Локальная записка](fatrop_implicit/research/INTERVAL_SCOPED_RICCATI.md)
+- Идея: каждой one-copy переменной назначается непрерывный интервал фаз —
+  phase-local `[f,f]`, interface `[f,f+1]`, segment `[a,b]` или global
+  `[0,F-1]`. После независимого исключения trajectory-блоков reduced graph
+  является interval graph.
+- Порядок по возрастающей правой границе интервала является perfect
+  elimination ordering, поэтому block factorization не создаёт структурного
+  fill. Сложность ограничивается максимальной одновременно активной
+  размерностью `omega`, а не суммой всех scoped variables.
+- Уже реализованы reduced-KKT, complete implicit-OCP и полный standalone
+  nonlinear exact-Hessian primal-dual Radau predictor-corrector с
+  двусторонними path inequalities; проверены dense-reference и matched
+  IPOPT+MA57 sweeps на 1/2/4/8 фазах и разных `(nx,nu,p)`.
+- **Оговорка:** perfect elimination interval graph — известный факт. Возможная
+  новизна после учёта PIPS ещё уже: явная реализованная поддержка произвольных
+  перекрывающихся one-copy interval variables, interval-specific PEO/width
+  bound и их интеграция с implicit/rank-aware Riccati leaves, nonlinear
+  direct collocation и slack/complementarity reduction. Не завершены
+  интеграция в production `IpAlgorithm`, restoration/inertia/globalization и
+  независимая экспертиза новизны.
+
+### 3.6. Общий nonlinear block-structured NLP с общими переменными
 
 **J. Kang, Y. Cao, D. P. Word, C. D. Laird.  
 “An Interior-Point Method for Efficient Solution of Block-Structured NLP
@@ -366,7 +440,7 @@ Chemical Engineering, 71:563–573, 2014.** **[journal]**
   глобальные параметры”, хотя внутренние блоки решаются не обязательно
   Riccati-рекурсией.
 
-### 3.5. Базовая статья PIQP
+### 3.7. Базовая статья PIQP
 
 **R. Schwan, Y. Jiang, D. Kuhn, C. N. Jones.  
 “PIQP: A Proximal Interior-Point Quadratic Programming Solver.” CDC, 2023,
@@ -377,7 +451,7 @@ pp. 1088–1093.** **[conference]**
 - Даёт: proximal primal-dual IPM, на котором построен более поздний
   multistage-arrow backend.
 
-### 3.6. Линейная алгебра bordered Riccati
+### 3.8. Линейная алгебра bordered Riccati
 
 После линеаризации глобальные параметры дают KKT-систему вида
 
@@ -856,12 +930,15 @@ $$
 - просто поддержать fixed model parameters;
 - просто локально сконденсировать regular collocation при невырожденном
   Jacobian.
+- просто заметить, что local linking blocks создают sparse/banded Schur
+  complement;
+- просто применить hierarchical Schur decomposition к consecutive blocks.
 
 ### Потенциально сильный вклад
 
-- единая generalized Riccati/Schur factorization для **глобальных decision
-  variables + arbitrary stage equalities/inequalities + exact indefinite
-  Hessian**;
+- единая interval-scoped factorization, в которой phase-local, interface,
+  segment и mission-global decision blocks хранятся по одному разу, а
+  сложность определяется максимальной активной шириной `omega`;
 - совместная обработка border с rank-deficient constraints и inertia
   correction primal-dual IPM;
 - implicit direct collocation без обязательного предположения, что каждый
@@ -881,12 +958,48 @@ $$
 Рабочая формулировка возможного вклада:
 
 > A structure-exploiting primal-dual interior-point method for nonlinear
-> optimal control with implicit collocation dynamics and globally coupled
-> decision parameters, using local interval elimination and a bordered
-> generalized Riccati factorization.
+> multiphase optimal control with implicit collocation dynamics and one-copy
+> decision variables of contiguous phase scope, combining rank-aware local
+> Riccati elimination with a fill-free interval-graph KKT factorization.
 
 Она существенно точнее и защищённее, чем утверждение “первая Riccati-рекурсия
 с глобальными параметрами”.
+
+### Реализованный результат на 17 июля 2026
+
+В `fatrop_implicit` реализован проверяемый прототип этой идеи на трёх уровнях:
+fill-free interval-graph reduced KKT, полная phase-condensing схема для
+explicit/implicit FATROP и точное исключение slack/complementarity в
+primal-dual системе. Для интервалов фаз доказано отсутствие структурного fill
+при упорядочении по правой границе и получена оценка
+`O(P omega^2)` по времени и `O(P omega)` по памяти.
+
+Полные implicit-OCP KKT решения совпадают с монолитным dense reference для
+1/2/4/8 фаз и разных `(nx,nu,p)`, включая локально rank-deficient случай.
+В контролируемом benchmark против оптимистичной упаковки всех статических
+переменных в один dense global Schur block получено:
+
+- почти равное время на 1--8 фазах;
+- `1.30x` на 64 фазах, `1.91x` на 128 и `4.27x` на 256 при фиксированной
+  `omega=8`;
+- до `11.24x` на 128 фазах при росте scoped-размерностей до
+  `(phase,interface,segment,global)=(8,4,8,8)`.
+
+Максимальная невязка полного KKT в этих сериях равна `2.1e-13`; Release suite
+проходит `165/165`, отдельные новые цели проходят ASan+UBSan. Добавлен
+standalone nonlinear exact-Hessian Radau predictor-corrector IPM с
+двусторонними неравенствами. В восьми bounded-width профилях на 1/2/4/8 фазах
+он проходит независимые KKT/derivative/solution gates против того же NLP в
+IPOPT+MA57 и даёт `1.00--2.55x`. Контрпример с `omega=58` честно проигрывает
+MA57 (`80.023` против `66.968 ms`). Affine и corrector используют один factor:
+на восьмифазном Radau-3 это уменьшило время `35.688 -> 26.340 ms`.
+
+Это уже алгоритмический и вычислительный результат, но после учёта arrowhead
+PIPS literature научная новизна остаётся кандидатной: production-интеграция,
+restoration/inertia/difficult-start qualification и независимая экспертиза
+claims ещё не завершены. Полная
+формулировка и протокол находятся в
+`fatrop_implicit/research/INTERVAL_SCOPED_RICCATI.md`.
 
 ---
 
@@ -898,9 +1011,12 @@ $$
 4. Schwan et al. 2025 — block-tridiagonal-arrow QP с global variables.
 5. Martinez et al. 2026 — parameterized equality-constrained Riccati.
 6. Callens, ветка `fatropv1-implicit` — локальная реализационная база.
-7. Sousa-Pinto–Orban 2026 — regularization, inertia и parallel recursion.
+7. Sousa-Pinto–Orban 2026 — regularization, inertia, cross-stage variables и
+   parallel recursion.
 8. Wächter–Biegler 2006 — свойства, которые нельзя потерять относительно
    IPOPT.
-9. Kang et al. 2014 — общий nonlinear Schur-complement взгляд.
-10. Hippo 2026 и MOTO — современный робототехнический stagewise solver
+9. Rehfeldt et al. 2022 и Kempke et al. 2026 — local-linking arrowhead IPM и
+   ближайшая generic граница новизны.
+10. Kang et al. 2014 — общий nonlinear Schur-complement взгляд.
+11. Hippo 2026 и MOTO — современный робототехнический stagewise solver
     baseline.

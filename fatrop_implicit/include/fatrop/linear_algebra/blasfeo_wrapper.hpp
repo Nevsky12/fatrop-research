@@ -223,7 +223,7 @@ namespace fatrop
         fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
         fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
                           "Indices must be non-negative");
-        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+        fatrop_dbg_assert(ai + n <= sA->m && aj + n <= sA->n && bi + m <= sB->m &&
                           bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         TRSM_RLNN(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
@@ -251,7 +251,7 @@ namespace fatrop
         fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
         fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
                           "Indices must be non-negative");
-        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+        fatrop_dbg_assert(ai + n <= sA->m && aj + n <= sA->n && bi + m <= sB->m &&
                           bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         TRSM_RLNU(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
@@ -265,10 +265,24 @@ namespace fatrop
         fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
         fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
                           "Indices must be non-negative");
-        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+        fatrop_dbg_assert(ai + n <= sA->m && aj + n <= sA->n && bi + m <= sB->m &&
                           bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         TRSM_RUNU(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
+                  dj);
+    }
+
+    static inline void blasfeo_trsm_llnn_wrap(int m, int n, Scalar alpha, const MAT *sA, int ai,
+                                              int aj, const MAT *sB, int bi, int bj, MAT *sD,
+                                              int di, int dj)
+    {
+        fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
+        fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
+                          "Indices must be non-negative");
+        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+                          bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
+                          "Submatrices must fit within matrix dimensions");
+        TRSM_LLNN(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
                   dj);
     }
 
@@ -283,6 +297,48 @@ namespace fatrop
                           bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         TRSM_LLNU(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
+                  dj);
+    }
+
+    static inline void blasfeo_trsm_lltn_wrap(int m, int n, Scalar alpha, const MAT *sA, int ai,
+                                              int aj, const MAT *sB, int bi, int bj, MAT *sD,
+                                              int di, int dj)
+    {
+        fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
+        fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
+                          "Indices must be non-negative");
+        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+                          bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
+                          "Submatrices must fit within matrix dimensions");
+        TRSM_LLTN(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
+                  dj);
+    }
+
+    static inline void blasfeo_trsm_lunu_wrap(int m, int n, Scalar alpha, const MAT *sA, int ai,
+                                              int aj, const MAT *sB, int bi, int bj, MAT *sD,
+                                              int di, int dj)
+    {
+        fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
+        fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
+                          "Indices must be non-negative");
+        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+                          bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
+                          "Submatrices must fit within matrix dimensions");
+        TRSM_LUNU(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
+                  dj);
+    }
+
+    static inline void blasfeo_trsm_lutu_wrap(int m, int n, Scalar alpha, const MAT *sA, int ai,
+                                              int aj, const MAT *sB, int bi, int bj, MAT *sD,
+                                              int di, int dj)
+    {
+        fatrop_dbg_assert(m >= 0 && n >= 0 && "Matrix dimensions must be positive");
+        fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && di >= 0 && dj >= 0 &&
+                          "Indices must be non-negative");
+        fatrop_dbg_assert(ai + m <= sA->m && aj + m <= sA->n && bi + m <= sB->m &&
+                          bj + n <= sB->n && di + m <= sD->m && dj + n <= sD->n &&
+                          "Submatrices must fit within matrix dimensions");
+        TRSM_LUTU(m, n, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, sD, di,
                   dj);
     }
 
@@ -310,8 +366,8 @@ namespace fatrop
         fatrop_dbg_assert(m >= 0 && n >= 0 && k >= 0 && "Matrix dimensions must be positive");
         fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && ci >= 0 && cj >= 0 &&
                           di >= 0 && dj >= 0 && "Indices must be non-negative");
-        fatrop_dbg_assert(ai + m <= sA->m && aj + k <= sA->n && bi + n <= sB->m &&
-                          bj + k <= sB->n && ci + m <= sC->m && cj + n <= sC->n &&
+        fatrop_dbg_assert(ai + m <= sA->m && aj + k <= sA->n && bi + k <= sB->m &&
+                          bj + n <= sB->n && ci + m <= sC->m && cj + n <= sC->n &&
                           di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         GEMM_NN(m, n, k, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, beta,
@@ -325,8 +381,8 @@ namespace fatrop
         fatrop_dbg_assert(m >= 0 && n >= 0 && k >= 0 && "Matrix dimensions must be positive");
         fatrop_dbg_assert(ai >= 0 && aj >= 0 && bi >= 0 && bj >= 0 && ci >= 0 && cj >= 0 &&
                           di >= 0 && dj >= 0 && "Indices must be non-negative");
-        fatrop_dbg_assert(ai + m <= sA->m && aj + k <= sA->n && bi + n <= sB->m &&
-                          bj + k <= sB->n && ci + m <= sC->m && cj + n <= sC->n &&
+        fatrop_dbg_assert(ai + k <= sA->m && aj + m <= sA->n && bi + k <= sB->m &&
+                          bj + n <= sB->n && ci + m <= sC->m && cj + n <= sC->n &&
                           di + m <= sD->m && dj + n <= sD->n &&
                           "Submatrices must fit within matrix dimensions");
         GEMM_TN(m, n, k, alpha, const_cast<MAT *>(sA), ai, aj, const_cast<MAT *>(sB), bi, bj, beta,

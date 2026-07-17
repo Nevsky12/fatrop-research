@@ -31,7 +31,13 @@ namespace fatrop
          * @param ng_ineq Vector of number of inequality constraints for each stage.
          */
         ProblemDims(int K, const std::vector<Index> &nu, const std::vector<Index> &nx,
-                const std::vector<Index> &ng, const std::vector<Index> &ng_ineq);
+                const std::vector<Index> &ng, const std::vector<Index> &ng_ineq,
+                Index number_of_global_parameters = 0);
+
+        ProblemDims(int K, const std::vector<Index> &nu, const std::vector<Index> &nx,
+                const std::vector<Index> &ng, const std::vector<Index> &ng_ineq,
+                Index number_of_global_parameters,
+                const std::vector<Index> &number_of_stage_border_variables);
 
         /**
          * @brief Constructs an ProblemDims object (rvalue reference version).
@@ -43,7 +49,12 @@ namespace fatrop
          * @param ng_ineq Vector of number of inequality constraints for each stage.
          */
         ProblemDims(int K, std::vector<Index> &&nu, std::vector<Index> &&nx, std::vector<Index> &&ng,
-                std::vector<Index> &&ng_ineq);
+                std::vector<Index> &&ng_ineq, Index number_of_global_parameters = 0);
+
+        ProblemDims(int K, std::vector<Index> &&nu, std::vector<Index> &&nx,
+                std::vector<Index> &&ng, std::vector<Index> &&ng_ineq,
+                Index number_of_global_parameters,
+                std::vector<Index> &&number_of_stage_border_variables);
         void check_problem_dimensions() const;
 
         const int K;                                  ///< Number of stages in the OCP.
@@ -53,6 +64,14 @@ namespace fatrop
             number_of_eq_constraints; ///< Number of path equality constraints for each stage.
         const std::vector<Index>
             number_of_ineq_constraints; ///< Number of path inequality constraints for each stage.
+        /// One-copy variables shared by every stage and phase.
+        const Index number_of_global_parameters;
+        /**
+         * External one-copy variables incident to each stage but not stored in
+         * the trajectory primal vector.  This is dimension metadata for
+         * bordered/interval-scoped factorizations; it allocates no variables.
+         */
+        const std::vector<Index> number_of_stage_border_variables;
     };
 
 } // namespace fatrop

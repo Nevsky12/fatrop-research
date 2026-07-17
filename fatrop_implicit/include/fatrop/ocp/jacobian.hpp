@@ -93,6 +93,10 @@ namespace fatrop
          */
         std::vector<MatRealAllocated> Gg_ineqt;
 
+        /** Complete constraint Jacobian with respect to the one-copy global
+         * parameter vector. Shape: number_of_eq_constraints x np. */
+        MatRealAllocated global_parameter_jacobian;
+
         // out <- alpha*y + Jacobian * x
         void apply_on_right(const OcpInfo& info, const VecRealView &x, Scalar alpha, const VecRealView& y, VecRealView &out) const;
         void transpose_apply_on_right(const OcpInfo& info, const VecRealView &mult_eq, Scalar alpha, const VecRealView& y, VecRealView &out) const;

@@ -5,7 +5,7 @@
 #include <string>
 
 // json
-#include <json/single_include/nlohmann/json.hpp>
+#include <nlohmann/json.hpp>
 
 #include <casadi/casadi.hpp>
 

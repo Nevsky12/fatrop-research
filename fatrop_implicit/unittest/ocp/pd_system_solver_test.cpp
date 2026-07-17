@@ -398,6 +398,146 @@ TEST_F(ImplicitPdTest, TestImplicitSolveDegen)
     EXPECT_NEAR(norm_inf(tmp), 0, 1e-6);
 }
 
+TEST(PdSolverGlobalParameters, NativeBorderedStepSatisfiesFullSystem)
+{
+    const ProblemDims dims(
+        2, std::vector<Index>{1, 0}, std::vector<Index>{1, 1},
+        std::vector<Index>{0, 0}, std::vector<Index>{0, 0}, 2);
+    const ProblemInfo info(dims);
+    Jacobian<OcpType> jacobian(dims);
+    Hessian<OcpType> hessian(dims);
+
+    jacobian.BAbt[0] = 0.0;
+    jacobian.BAbt[0](0, 0) = 1.2;
+    jacobian.BAbt[0](1, 0) = -0.7;
+    jacobian.global_parameter_jacobian = 0.0;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_dyn[0], 0) = 0.3;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_dyn[0], 1) = -0.4;
+
+    hessian.set_zero();
+    hessian.RSQrqt[0](0, 0) = 3.0;
+    hessian.RSQrqt[0](0, 1) = 0.2;
+    hessian.RSQrqt[0](1, 0) = 0.2;
+    hessian.RSQrqt[0](1, 1) = 4.0;
+    hessian.RSQrqt[1](0, 0) = 5.0;
+    hessian.global_parameter_cross_hessian(0, 0) = 0.15;
+    hessian.global_parameter_cross_hessian(0, 1) = -0.08;
+    hessian.global_parameter_cross_hessian(1, 0) = 0.04;
+    hessian.global_parameter_cross_hessian(1, 1) = 0.11;
+    hessian.global_parameter_cross_hessian(2, 0) = -0.05;
+    hessian.global_parameter_cross_hessian(2, 1) = 0.07;
+    hessian.global_parameter_hessian(0, 0) = 6.0;
+    hessian.global_parameter_hessian(0, 1) = 0.1;
+    hessian.global_parameter_hessian(1, 0) = 0.1;
+    hessian.global_parameter_hessian(1, 1) = 7.0;
+
+    VecRealAllocated D_x(info.number_of_primal_variables);
+    VecRealAllocated D_e(info.number_of_eq_constraints);
+    VecRealAllocated rhs_x(info.number_of_primal_variables);
+    VecRealAllocated rhs_g(info.number_of_eq_constraints);
+    D_x = 0.2;
+    D_e = 0.0;
+    for (Index row = 0; row < rhs_x.m(); ++row)
+        rhs_x(row) = 0.1 * (row + 1);
+    rhs_g(0) = -0.35;
+
+    VecRealAllocated empty(info.number_of_slack_variables);
+    VecRealAllocated rhs_s(info.number_of_slack_variables);
+    VecRealAllocated rhs_cl(info.number_of_slack_variables);
+    VecRealAllocated rhs_cu(info.number_of_slack_variables);
+    auto trajectory_solver = std::make_shared<AugSystemSolver<OcpType>>(info);
+    PdSolverOrig<OcpType> pd_solver(info, trajectory_solver);
+    LinearSystem<PdSystemType<OcpType>> system(
+        info, jacobian, hessian, D_x, true, D_e,
+        empty, empty, empty, empty, rhs_x, rhs_s, rhs_g, rhs_cl, rhs_cu);
+
+    VecRealAllocated original_rhs(system.m());
+    VecRealAllocated solution(system.m());
+    VecRealAllocated residual(system.m());
+    system.get_rhs(original_rhs);
+    ASSERT_EQ(pd_solver.solve_in_place(system), LinsolReturnFlag::SUCCESS);
+    system.get_rhs(solution);
+    system.set_rhs(original_rhs);
+    system.apply_on_right(solution, 1.0, original_rhs, residual);
+    EXPECT_LT(norm_inf(residual), 1e-10);
+}
+
+TEST(PdSolverGlobalParameters, NativeImplicitBorderedStepSatisfiesFullSystem)
+{
+    const ProblemDims dims(
+        2, std::vector<Index>{1, 0}, std::vector<Index>{1, 1},
+        std::vector<Index>{1, 0}, std::vector<Index>{0, 0}, 2);
+    const ProblemInfo info(dims);
+    Jacobian<ImplicitOcpType> jacobian(dims);
+    Hessian<ImplicitOcpType> hessian(dims);
+
+    jacobian.BAbt[0] = 0.0;
+    jacobian.BAbt[0](0, 0) = 1.2;
+    jacobian.BAbt[0](1, 0) = -0.7;
+    jacobian.Jt[0] = 0.0;
+    jacobian.Jt_inv[0] = 0.0;
+    jacobian.Jt[0](0, 0) = -1.0;
+    jacobian.Jt_inv[0](0, 0) = -1.0;
+    jacobian.Gg_eqt[0] = 0.0;
+    jacobian.Gg_eqt[0](0, 0) = 0.55;
+    jacobian.Gg_eqt[0](1, 0) = -0.25;
+    jacobian.global_parameter_jacobian = 0.0;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_dyn[0], 0) = 0.3;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_dyn[0], 1) = -0.4;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_path[0], 0) = -0.12;
+    jacobian.global_parameter_jacobian(info.offsets_g_eq_path[0], 1) = 0.18;
+
+    hessian.set_zero();
+    hessian.FuFx[0] = 0.0;
+    hessian.RSQrqt[0](0, 0) = 3.0;
+    hessian.RSQrqt[0](0, 1) = 0.2;
+    hessian.RSQrqt[0](1, 0) = 0.2;
+    hessian.RSQrqt[0](1, 1) = 4.0;
+    hessian.RSQrqt[1](0, 0) = 5.0;
+    hessian.global_parameter_cross_hessian(0, 0) = 0.15;
+    hessian.global_parameter_cross_hessian(0, 1) = -0.08;
+    hessian.global_parameter_cross_hessian(1, 0) = 0.04;
+    hessian.global_parameter_cross_hessian(1, 1) = 0.11;
+    hessian.global_parameter_cross_hessian(2, 0) = -0.05;
+    hessian.global_parameter_cross_hessian(2, 1) = 0.07;
+    hessian.global_parameter_hessian(0, 0) = 6.0;
+    hessian.global_parameter_hessian(0, 1) = 0.1;
+    hessian.global_parameter_hessian(1, 0) = 0.1;
+    hessian.global_parameter_hessian(1, 1) = 7.0;
+
+    VecRealAllocated D_x(info.number_of_primal_variables);
+    VecRealAllocated D_e(info.number_of_eq_constraints);
+    VecRealAllocated rhs_x(info.number_of_primal_variables);
+    VecRealAllocated rhs_g(info.number_of_eq_constraints);
+    D_x = 0.2;
+    D_e = 0.0;
+    D_e(info.offsets_g_eq_path[0]) = 0.06;
+    for (Index row = 0; row < rhs_x.m(); ++row)
+        rhs_x(row) = 0.1 * (row + 1);
+    rhs_g(info.offsets_g_eq_path[0]) = 0.17;
+    rhs_g(info.offsets_g_eq_dyn[0]) = -0.35;
+
+    VecRealAllocated empty(info.number_of_slack_variables);
+    VecRealAllocated rhs_s(info.number_of_slack_variables);
+    VecRealAllocated rhs_cl(info.number_of_slack_variables);
+    VecRealAllocated rhs_cu(info.number_of_slack_variables);
+    auto trajectory_solver =
+        std::make_shared<AugSystemSolver<ImplicitOcpType>>(info);
+    PdSolverOrig<ImplicitOcpType> pd_solver(info, trajectory_solver);
+    LinearSystem<PdSystemType<ImplicitOcpType>> system(
+        info, jacobian, hessian, D_x, true, D_e,
+        empty, empty, empty, empty, rhs_x, rhs_s, rhs_g, rhs_cl, rhs_cu);
+
+    VecRealAllocated original_rhs(system.m());
+    VecRealAllocated solution(system.m());
+    VecRealAllocated residual(system.m());
+    system.get_rhs(original_rhs);
+    ASSERT_EQ(pd_solver.solve_once(system, solution), LinsolReturnFlag::SUCCESS);
+    EXPECT_TRUE(trajectory_solver->using_identity_dynamics_fast_path());
+    system.apply_on_right(solution, 1.0, original_rhs, residual);
+    EXPECT_LT(norm_inf(residual), 1e-9);
+}
+
 
 int main(int argc, char **argv)
 {
